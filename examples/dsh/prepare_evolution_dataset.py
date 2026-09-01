@@ -53,11 +53,11 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
 def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> list[dict[str, str]]:
     """Render a bounded task instruction without revealing the reference output."""
     operation_bodies = {
-        "normalize_whitespace": "return String(args.text).split(/\\s+/).filter(Boolean).join(' ')",
-        "redact_email": (
-            "return args.text.replace(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
-            "[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+/g, '<EMAIL>')"
+        "normalize_whitespace": (
+            "return args.text.replaceAll(String.fromCharCode(10), ' ').replaceAll(String.fromCharCode(9), ' ')"
+            ".trim().split(' ').filter(Boolean).join(' ')"
         ),
+        "redact_email": ("return args.text.replace(new RegExp(\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\", 'g'), '<EMAIL>')"),
         "mask_digits": "return args.text.replace(/[0-9]/g, '#')",
     }
     operation_body = operation_bodies[operation]
