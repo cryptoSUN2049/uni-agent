@@ -67,6 +67,35 @@ This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier
 
 ## Bounded Harness evolution task
 
+### Expanded v2 corpus
+
+`evolution_scenarios_v2.jsonl` is the first non-bootstrap release input for a
+credible online-RL run. It contains 16 mutually exclusive train identities and
+8 mutually exclusive holdout identities, balanced across the four deterministic
+operations (`trim`, `normalize_whitespace`, `redact_email`, and `mask_digits`).
+Every row points to a distinct immutable fixture under
+`examples/dsh/fixtures/evolution-v2/`; no fixture is shared across splits.
+The original `evolution_scenarios.jsonl` and
+`evolution_bootstrap_scenarios.jsonl` remain small regression/pilot inputs.
+
+Build this corpus from the repository root (using module mode keeps the
+namespace-package import path explicit):
+
+```sh
+VERIFIER_DIGEST="sha256:$(sha256sum examples/dsh/evolution_verifier.py | cut -d' ' -f1)"
+PYTHONPATH=. python -m examples.dsh.prepare_evolution_dataset \
+  --scenario-file examples/dsh/evolution_scenarios_v2.jsonl \
+  --fixture-root . \
+  --output-dir /absolute/path/to/dsh-evolution-v2 \
+  --environment-digest sha256:<pinned-runtime-digest> \
+  --verifier-code-digest "${VERIFIER_DIGEST}" \
+  --patch examples/dsh/evolution.patch.yml
+```
+
+The builder must report `train=16, holdout=8`. Keep the generated Parquet
+outside Git and record its SHA-256 plus the scenario-file and verifier digests
+in the run manifest.
+
 `evolution_task_config.yaml` selects `sdk-minimal` plus
 `evolution.patch.yml`, which adds the official DSH
 `@deepseek-ai/dsh-cordis-host-runner` and `@deepseek-ai/dsh-tool-cordis` rows as
