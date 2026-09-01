@@ -46,7 +46,7 @@ _VLLM_TOOL_PARSER_ALIASES = {
     "qwen3": "hermes",
 }
 
-_HERMES_TOOL_CALL_PATTERN = re.compile(r"<tool_call>\\s*(.*?)\\s*</tool_call>", re.DOTALL)
+_HERMES_TOOL_CALL_PATTERN = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 _MAX_HERMES_RECOVERY_CLOSERS = 4
 
 
@@ -65,7 +65,7 @@ def _load_json_with_missing_closers(value: str) -> Any | None:
         if in_string:
             if escaped:
                 escaped = False
-            elif char == "\\\\":
+            elif char == "\\":
                 escaped = True
             elif char == '"':
                 in_string = False
