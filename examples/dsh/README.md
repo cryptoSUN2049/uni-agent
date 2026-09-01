@@ -69,7 +69,19 @@ This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier
 
 The dedicated dense recipe uses VERL V1 sync training, two rollouts per prompt for GRPO, LoRA, and one training step. It does not reuse `train_qwen3_27b.sh`, which targets a different Qwen3 MoE/Megatron topology. Set `LOW_VRAM=1` for the tested 24 GB RTX 4090 profile; the profile uses BF16 actor weights, FSDP parameter offload, vLLM eager execution, an 8 GB CPU KV offload budget, short context, LoRA rank 4, and a LoRA-only checkpoint.
 
-Before launching, prepare an `eligible` DSH seed Parquet and a held-out Parquet, install one consistent VERL/vLLM environment, and install both DSH SDK/runtime wheels in that same environment. This branch pins the VERL submodule at `483b8a009ba3a97563edee3a19887e4862b8094a` (`v0.9.0`), which is the tested runtime. The tested Linux environment used torch 2.10.0+cu128, vLLM 0.18.1, Ray 2.58.0, Transformers 4.57.6, TensorDict 0.10.0, and TransferQueue 0.1.11.dev0 from TransferQueue commit `06ad9c9022d49bb4791289edb3b50951fe665e9f`. The v0.9 package metadata asks for Transformers 5.5.3+, while vLLM 0.18.1 requires Transformers below 5; this tested lane therefore installs the explicit versions first and installs the local VERL and Uni-Agent sources with `--no-deps`. Treat that `--no-deps` choice as a pinned compatibility exception, and do not run `pip install -e verl` without it. The v0.9 checkout has no `manage_envs.py`; do not use the newer `verl/manage_envs.py sync` lock for this lane because it resolves a different CUDA/Torch/vLLM stack. Review the model license and set the explicit acknowledgement:
+Before launching, prepare an `eligible` DSH seed Parquet and a held-out Parquet, install one consistent VERL/vLLM environment, and install both DSH SDK/runtime wheels in that same environment. This branch pins the VERL submodule at `483b8a009ba3a97563edee3a19887e4862b8094a` (`v0.9.0`), which is the tested runtime. The tested Linux environment used torch 2.10.0+cu128, vLLM 0.18.1, Ray 2.58.0, Transformers 4.57.6, TensorDict 0.10.0, and TransferQueue 0.1.11.dev0 from TransferQueue commit `06ad9c9022d49bb4791289edb3b50951fe665e9f`. The v0.9 package metadata asks for Transformers 5.5.3+, while vLLM 0.18.1 requires Transformers below 5; this tested lane therefore installs the explicit versions first and installs the local VERL and Uni-Agent sources with `--no-deps`. Treat that `--no-deps` choice as a pinned compatibility exception, and do not run `pip install -e verl` without it. The v0.9 checkout has no `manage_envs.py`; do not use the newer `verl/manage_envs.py sync` lock for this lane because it resolves a different CUDA/Torch/vLLM stack. Do not use this repository's `requirements-test.txt` for the GPU lane: it intentionally targets a different vLLM version. An equivalent explicit install is:
+
+```sh
+python -m pip install \
+  "torch==2.10.0" "torchvision==0.25.0" "torchaudio==2.10.0" \
+  "vllm==0.18.1" "ray[default]==2.58.0" "transformers==4.57.6" \
+  "tensordict==0.10.0" "torchdata==0.11.0" \
+  "TransferQueue @ git+https://github.com/Ascend/TransferQueue.git@06ad9c9022d49bb4791289edb3b50951fe665e9f"
+python -m pip install --no-deps -e ./verl
+python -m pip install --no-deps -e .
+```
+
+Install the DSH SDK/runtime from its Linux build in the same environment before launching. Review the model license and set the explicit acknowledgement:
 
 ```sh
 MODEL_LICENSE_APPROVED=1 \
