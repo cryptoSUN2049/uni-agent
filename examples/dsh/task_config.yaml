@@ -14,14 +14,16 @@
   agent:
     name: dsh
     model:
-      # Bound the first 3B smoke and training proof to a short text episode.
+      # Bound the first Qwen3 3B-class smoke and training proof to a short text episode.
       # The Gateway still injects base_url, api_key, and model_name at runtime.
       max_total_tokens: 1024
       max_tokens_per_turn: 1024
     runner_python: python
     runner_module: uni_agent.agents.dsh.runner
     default_workdir: "."
-    profile: sdk
+    # The first proof uses the official standalone profile so its tool prompt
+    # fits the bounded VERL trajectory. Full `sdk` is a separate capability gate.
+    profile: sdk-minimal
     provider: deepseek-official
     keep_trace: true
     run_timeout: 1800

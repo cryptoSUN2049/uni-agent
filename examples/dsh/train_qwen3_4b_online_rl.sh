@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DSH Agent + VERL V1 sync GRPO/LoRA proof | Qwen2.5-3B-Instruct | one update
+# DSH Agent + VERL V1 sync GRPO/LoRA proof | Qwen3-4B | one update
 #
 # This is a deliberately small, dense-model recipe. It does not reuse the
 # Qwen3-27B MoE launcher: that launcher has a different topology and model
@@ -13,13 +13,13 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 VERL_ROOT="${REPO_ROOT}/verl"
 cd "${REPO_ROOT}"
 
-MODEL_ID="Qwen/Qwen2.5-3B-Instruct"
+MODEL_ID="${MODEL_ID:-Qwen/Qwen3-4B}"
 MODEL_PATH="${MODEL_PATH:-}"
 TRAIN_FILE="${TRAIN_FILE:-${HOME}/data/dsh/verl-online-rl-seeds.parquet}"
 TEST_FILE="${TEST_FILE:-${HOME}/data/dsh/verl-online-rl-holdout.parquet}"
 TASK_CONFIG="${TASK_CONFIG:-${REPO_ROOT}/examples/dsh/task_config.yaml}"
-RUN_ROOT="${RUN_ROOT:-${HOME}/runs/dsh-qwen25-3b-online-rl}"
-PROJECT_NAME="${PROJECT_NAME:-dsh-qwen25-3b-online-rl}"
+RUN_ROOT="${RUN_ROOT:-${HOME}/runs/dsh-qwen3-4b-online-rl}"
+PROJECT_NAME="${PROJECT_NAME:-dsh-qwen3-4b-online-rl}"
 EXP_NAME="${EXP_NAME:-one-update}"
 CKPTS_DIR="${CKPTS_DIR:-${RUN_ROOT}/checkpoints/${PROJECT_NAME}/${EXP_NAME}}"
 AGENT_LOG_DIR="${AGENT_LOG_DIR:-${RUN_ROOT}/agent-logs/${PROJECT_NAME}/${EXP_NAME}}"
@@ -34,7 +34,7 @@ ROLLOUT_N="${ROLLOUT_N:-2}"
 GATEWAY_COUNT="${GATEWAY_COUNT:-1}"
 CONCURRENCY="${CONCURRENCY:-1}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.35}"
-MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-512}"
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
 PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-2048}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-1}"
@@ -52,7 +52,7 @@ RESUME_FROM_PATH="${RESUME_FROM_PATH:-}"
 if [[ "${PRINT_COMMAND:-0}" == "1" ]]; then
   # PRINT_COMMAND is a dependency-free config gate used by CI and operators to
   # inspect the exact Hydra overrides without starting Ray or touching data.
-  : "${MODEL_PATH:=/models/Qwen2.5-3B-Instruct-snapshot}"
+  : "${MODEL_PATH:=/models/Qwen3-4B-snapshot}"
   COMMAND=(
     "${PYTHON_BIN}" -m verl.trainer.main_ppo
     "trainer.use_v1=True"
@@ -68,6 +68,7 @@ if [[ "${PRINT_COMMAND:-0}" == "1" ]]; then
     "data.train_batch_size=${TRAIN_BATCH_SIZE}"
     "data.max_prompt_length=${MAX_PROMPT_LENGTH}"
     "data.max_response_length=${MAX_RESPONSE_LENGTH}"
+    "++data.apply_chat_template_kwargs.enable_thinking=False"
     "actor_rollout_ref.model.path=${MODEL_PATH}"
     "actor_rollout_ref.model.lora_rank=${LORA_RANK}"
     "actor_rollout_ref.model.lora_alpha=${LORA_ALPHA}"
@@ -106,21 +107,28 @@ if [[ ! -d "${VERL_ROOT}/verl" ]]; then
   echo "VERL checkout is missing: ${VERL_ROOT}/verl" >&2
   exit 2
 fi
-if [[ "${QWEN_LICENSE_APPROVED:-0}" != "1" ]]; then
-  echo "set QWEN_LICENSE_APPROVED=1 after reviewing the Qwen research license" >&2
+if [[ "${MODEL_LICENSE_APPROVED:-0}" != "1" ]]; then
+  echo "set MODEL_LICENSE_APPROVED=1 after reviewing the model license" >&2
   exit 2
 fi
 
 export PYTHONPATH="${REPO_ROOT}:${VERL_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-"${PYTHON_BIN}" - "${MODEL_PATH}" <<'PY'
+"${PYTHON_BIN}" - "${MODEL_PATH}" "${MODEL_ID}" <<'PY'
 import json
 import sys
 
 model_path = sys.argv[1]
+model_id = sys.argv[2]
 with open(f"{model_path}/config.json", encoding="utf-8") as stream:
     config = json.load(stream)
-if config.get("model_type") != "qwen2" or config.get("num_hidden_layers") != 36:
-    raise SystemExit("MODEL_PATH is not the expected Qwen2.5-3B dense architecture")
+if config.get("model_type") != "qwen3":
+    raise SystemExit("MODEL_PATH must use a Qwen3 architecture")
+if any(key in config for key in ("num_local_experts", "num_experts", "moe_intermediate_size")):
+    raise SystemExit("MODEL_PATH must be a dense Qwen3 checkpoint, not a MoE checkpoint")
+if model_id == "Qwen/Qwen3-4B" and (
+    config.get("num_hidden_layers") != 36 or config.get("hidden_size") != 2560
+):
+    raise SystemExit("MODEL_PATH is not the expected Qwen/Qwen3-4B dense architecture")
 try:
     import deepseek_harness  # noqa: F401
     import deepseek_harness_runtime  # noqa: F401
@@ -153,6 +161,7 @@ COMMAND=(
   data.train_batch_size="${TRAIN_BATCH_SIZE}"
   data.max_prompt_length="${MAX_PROMPT_LENGTH}"
   data.max_response_length="${MAX_RESPONSE_LENGTH}"
+  ++data.apply_chat_template_kwargs.enable_thinking=False
   actor_rollout_ref.model.path="${MODEL_PATH}"
   actor_rollout_ref.model.use_remove_padding=True
   actor_rollout_ref.model.enable_gradient_checkpointing=True

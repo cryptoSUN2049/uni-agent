@@ -158,6 +158,26 @@ async def test_tool_call_dispatch_uses_hermes_for_qwen25_vllm_rollout(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_tool_call_dispatch_uses_hermes_for_qwen3_instruct_vllm_rollout(monkeypatch):
+    from uni_agent.gateway.session.codec import MessageCodec
+
+    seen = {}
+
+    def fake_vllm(text, tools, parser_name):
+        seen["vllm"] = (text, tools, parser_name)
+        return "", [SimpleNamespace(name="search", arguments='{"query":"x"}')]
+
+    codec = MessageCodec(FakeTokenizer(), rollout_backend="vllm")
+    monkeypatch.setattr(codec, "_process_tool_calls_vllm", fake_vllm)
+
+    content, calls = await codec._extract_tool_calls(_ids("raw"), TOOLS, "qwen3")
+
+    assert content == ""
+    assert calls[0].name == "search"
+    assert seen["vllm"] == ("raw", TOOLS, "hermes")
+
+
+@pytest.mark.asyncio
 async def test_tool_call_dispatch_uses_verl_for_other_rollout_backends(monkeypatch):
     from uni_agent.gateway.session.codec import MessageCodec
 

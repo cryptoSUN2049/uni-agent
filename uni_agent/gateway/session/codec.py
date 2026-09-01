@@ -35,10 +35,11 @@ _SGLANG_TOOL_PARSER_ALIASES = {
 
 _VLLM_TOOL_PARSER_ALIASES = {
     "qwen": "qwen3_xml",
-    # Qwen2.5 emits the Hermes-compatible JSON <tool_call> envelope. The
-    # qwen3_xml parser expects the different <function=> format.
+    # Qwen2.5 and dense Qwen3-Instruct emit the Hermes-compatible JSON
+    # <tool_call> envelope. The qwen3_xml parser expects the different
+    # <function=> format used by Qwen3-Coder.
     "qwen25": "hermes",
-    "qwen3": "qwen3_xml",
+    "qwen3": "hermes",
 }
 
 
