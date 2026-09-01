@@ -4,6 +4,8 @@ This directory is the smallest runnable S0 surface for the official DSH path. Th
 
 The included `verifier.py` is a deterministic smoke fixture. It checks exact trace and envelope hashes and awards one only when `metadata.expected_response_sha256` matches the response. Replace it with a benchmark-specific verifier before any training release; never use a non-fresh or actor-supplied score as online reward.
 
+The first training proof uses the exact `Qwen/Qwen2.5-3B-Instruct` checkpoint. The 3B choice is an integration gate, not a claim that the model already understands DSH or can perform self-evolution. The launcher fails closed on a missing DSH runtime, an unacknowledged reward POST, or any failed rollout session.
+
 ## Seed metadata
 
 Rows produced from a released DSH task seed must carry the immutable identity fields below in `extra_info.tools_kwargs.task.metadata`:
@@ -21,7 +23,7 @@ Rows produced from a released DSH task seed must carry the immutable identity fi
 }
 ```
 
-`verifier_command`, Sandbox controls, and model credentials stay in the operator-owned Task Config. A sample row cannot replace them.
+`verifier_command`, Sandbox controls, model credentials, and the short first-proof generation budget stay in the operator-owned Task Config. The checked-in config fixes `max_total_tokens=1024` and `max_tokens_per_turn=1024`; a sample row cannot replace them.
 
 ## Importing the M3 dual-backend release
 
@@ -48,14 +50,48 @@ fresh reward.
 
 ## S0 smoke
 
-Install the matching DSH SDK/runtime in the Python environment used by the local Sandbox, then run the existing VERL inference entrypoint from this repository root:
+Install the matching DSH SDK/runtime in the Python environment used by the local Sandbox, then run the VERL inference entrypoint from this repository root. Use a local, pinned Qwen2.5-3B snapshot and the Hermes parser:
 
 ```sh
 python examples/inference/parallel_infer_verl.py \
   --data-path /absolute/path/to/dsh.parquet \
-  --model-path /absolute/path/to/Qwen3-27B \
+  --model-path /absolute/path/to/Qwen2.5-3B-Instruct \
   --task-config examples/dsh/task_config.yaml \
-  --limit 1 --n 1
+  --limit 1 --n 1 \
+  --nnodes 1 --n-gpus-per-node 1 --tensor-parallel-size 1 \
+  --gpu-memory-utilization 0.5 --tool-parser hermes \
+  --gateway-count 1 --concurrency 1 --require-reward-post
 ```
 
-This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier, and TransferQueue materialization. It is an integration smoke, not evidence of a parameter update or capability improvement. For a GPU training run, use the existing VERL recipe with `TASK_CONFIG=examples/dsh/task_config.yaml` and pin the model, tokenizer, chat template, CUDA image, and release manifest first.
+This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier, and TransferQueue materialization. It is an integration smoke, not evidence of a parameter update or capability improvement.
+
+## One-update online RL proof
+
+The dedicated dense recipe uses VERL V1 sync training, two rollouts per prompt for GRPO, LoRA rank 32, and one training step. It does not reuse `train_qwen3_27b.sh`, which targets a different Qwen3 MoE/Megatron topology.
+
+Before launching, prepare an `eligible` DSH seed Parquet and a held-out Parquet, install one consistent VERL/vLLM environment, and install both DSH SDK/runtime wheels in that same environment. This checkout pins the VERL submodule at `fefb080262e1c015a0ea05f958822a6a512dc795`; from `verl/`, use `python manage_envs.py sync vllm fsdp` (or the equivalent `uv sync --python 3.12 --extra vllm --extra fsdp`) and then install Uni-Agent/DSH without letting the root `requirements-test.txt` downgrade VERL's vLLM stack. Review the Qwen research license and set the explicit acknowledgement:
+
+```sh
+QWEN_LICENSE_APPROVED=1 \
+MODEL_PATH=/absolute/path/to/Qwen2.5-3B-Instruct \
+TRAIN_FILE=/absolute/path/to/dsh-train.parquet \
+TEST_FILE=/absolute/path/to/dsh-holdout.parquet \
+bash examples/dsh/train_qwen25_3b_online_rl.sh
+```
+
+The script requires `config.json` and `tokenizer_config.json`, checks the Qwen2 dense 36-layer architecture, and fails before Ray starts when the DSH runtime or TransferQueue is unavailable. It writes agent traces, rollout/validation dumps, and a VERL checkpoint under `RUN_ROOT`. A successful run must show non-empty `response_ids`/`response_mask`, a fresh reward acknowledgement, `trainer/global_step=1`, and a checkpoint containing the actor state.
+
+To exercise checkpoint reload without another optimizer step, point the same launcher at the saved `global_step_1` directory and run validation only:
+
+```sh
+QWEN_LICENSE_APPROVED=1 \
+MODEL_PATH=/absolute/path/to/Qwen2.5-3B-Instruct \
+TRAIN_FILE=/absolute/path/to/dsh-train.parquet \
+TEST_FILE=/absolute/path/to/dsh-holdout.parquet \
+RESUME_MODE=resume_path \
+RESUME_FROM_PATH=/absolute/path/to/checkpoints/global_step_1 \
+VAL_ONLY=True \
+bash examples/dsh/train_qwen25_3b_online_rl.sh
+```
+
+This proves reload and held-out execution; it does not by itself prove capability improvement. Record the model/tokenizer/template, DSH runtime, verifier, Uni-Agent, VERL, and dependency revisions with the run artifacts before comparing against the frozen base.

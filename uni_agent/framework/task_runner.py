@@ -86,6 +86,7 @@ async def run_task(
     api_key: str = "EMPTY",
     model_name: str | None = None,
     report_reward: bool = False,
+    require_reward_post: bool = False,
     **_: Any,
 ) -> TaskResult:
     """Resolve the sample's task, run it against ``session``, and return its result.
@@ -98,8 +99,16 @@ async def run_task(
     ``task_config_path``. ``TaskConfigResolver`` applies that Task Config, the
     sample values, and the live endpoint in order. When ``report_reward`` is set,
     the task's reward + info are POSTed back to the session's reward-info endpoint;
-    the standalone evaluator reads the returned :class:`TaskResult` directly.
+    the standalone evaluator reads the returned :class:`TaskResult` directly. ``require_reward_post`` makes that
+    delivery an episode precondition and raises when the endpoint is absent or the POST is not acknowledged.
     """
+    if type(report_reward) is not bool:
+        raise ValueError("report_reward must be a bool")
+    if type(require_reward_post) is not bool:
+        raise ValueError("require_reward_post must be a bool")
+    if require_reward_post and not report_reward:
+        raise ValueError("require_reward_post requires report_reward=True")
+
     sample_config = tools_kwargs.get("task") if tools_kwargs else None
     if not isinstance(sample_config, dict):
         raise ValueError("run_task requires tools_kwargs['task'] (the serialized Task Config)")
@@ -133,8 +142,13 @@ async def run_task(
         task_instance = get_task(task)
         result = await task_instance.run()
         reward_posted = False
-        if report_reward and session.reward_info_url:
-            reward_posted = await _post_reward_info(session.reward_info_url, result)
+        if report_reward:
+            if session.reward_info_url:
+                reward_posted = await _post_reward_info(session.reward_info_url, result)
+            elif require_reward_post:
+                raise RuntimeError("reward-info endpoint is required but the session did not provide one")
+        if require_reward_post and not reward_posted:
+            raise RuntimeError("reward acknowledgement was not received from the reward-info endpoint")
         span.record_result(result, reward_posted=reward_posted)
         logger.info(
             "run_task done: task=%s reward=%s acc=%s finished=%s reward_posted=%s",

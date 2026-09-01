@@ -321,6 +321,7 @@ class GatewayAgentFramework(AgentFramework):
         rollout_config=None,
         log_dir: str | None = None,
         mask_unfinished_episode: bool = False,
+        fail_on_rollout_error: bool = False,
         trajectory_postprocessor: TrajectoryPostprocessor | None = None,
         trajectory_postprocessor_kwargs: dict[str, object] | None = None,
     ):
@@ -340,6 +341,7 @@ class GatewayAgentFramework(AgentFramework):
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._log_dir = log_dir
         self._mask_unfinished_episode = mask_unfinished_episode
+        self._fail_on_rollout_error = fail_on_rollout_error
         self._trajectory_postprocessor = trajectory_postprocessor
         self._trajectory_postprocessor_kwargs = trajectory_postprocessor_kwargs or {}
 
@@ -375,6 +377,10 @@ class GatewayAgentFramework(AgentFramework):
         if type(mask_unfinished_episode) is not bool:
             raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode must be a bool")
 
+        fail_on_rollout_error = af_cfg.get("fail_on_rollout_error", False)
+        if type(fail_on_rollout_error) is not bool:
+            raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.fail_on_rollout_error must be a bool")
+
         postprocessor_fqn = af_cfg.get("trajectory_postprocessor_fqn")
         postprocessor_kwargs = af_cfg.get("trajectory_postprocessor_kwargs")
         if postprocessor_kwargs is None:
@@ -409,6 +415,7 @@ class GatewayAgentFramework(AgentFramework):
             rollout_config=config.actor_rollout_ref.rollout,
             log_dir=log_dir,
             mask_unfinished_episode=mask_unfinished_episode,
+            fail_on_rollout_error=fail_on_rollout_error,
             trajectory_postprocessor=trajectory_postprocessor,
             trajectory_postprocessor_kwargs=trajectory_postprocessor_kwargs,
         )
@@ -483,6 +490,10 @@ class GatewayAgentFramework(AgentFramework):
             partition_id=partition_id,
             num_sessions=num_sessions,
         )
+        if self._fail_on_rollout_error and stats["num_failed_sessions"] > 0:
+            raise RuntimeError(
+                f"rollout failure at global_steps={global_steps}: {stats['num_failed_sessions']} session(s) failed"
+            )
         logger.info(
             "generate_sequences summary: num_input_prompts=%s num_success_sessions=%s "
             "num_failed_sessions=%s num_success_outputs=%s num_unfinished_episodes=%s "
@@ -578,7 +589,9 @@ class GatewayAgentFramework(AgentFramework):
         )
 
         # Prompt layer: rollout.n sessions race independently for the same uid.
-        # Successful sessions are written to TQ; failed sessions only affect this uid's stats.
+        # Keep all successful outcomes in memory until the group decision is known.  A
+        # strict GRPO group must be all-or-nothing: writing one sibling before another
+        # fails would leave a materializable but undersized group in TransferQueue.
         tasks = [
             self._run_agent_episode_with_concurrency_limit(
                 sample_fields=sample_fields,
@@ -596,6 +609,7 @@ class GatewayAgentFramework(AgentFramework):
         success_outputs = 0
         unfinished_episodes = 0
         failure_reasons: list[str] = []
+        successful_outcomes: list[tuple[int, list[Trajectory], dict[str, object]]] = []
         for session_index, outcome in enumerate(outcomes):
             if isinstance(outcome, Exception):
                 failed_sessions += 1
@@ -612,26 +626,84 @@ class GatewayAgentFramework(AgentFramework):
                 failure_reasons.append(f"empty trajectories for uid={uid} session_index={session_index}")
                 continue
 
+            successful_outcomes.append((session_index, trajectories, session_sample_fields))
+
+        if self._fail_on_rollout_error and failed_sessions:
+            logger.warning(
+                "strict rollout group rejected for uid=%s: %s/%s session(s) failed; no trajectories will be written",
+                uid,
+                failed_sessions,
+                num_sessions,
+            )
+            await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "failure"})
+            return {
+                "num_success_sessions": 0,
+                "num_failed_sessions": failed_sessions,
+                "num_success_outputs": 0,
+                "num_unfinished_episodes": 0,
+                "num_failed_uids": 1,
+                "failure_reasons": failure_reasons,
+            }
+
+        if self._fail_on_rollout_error:
+            # Strict groups are prepared and submitted in one TQ batch.  If the
+            # backend rejects the batch, clear every candidate key before marking
+            # the uid failed so a partial storage write cannot be sampled later.
             try:
-                await self._write_session_trajectories_to_tq(
+                await self._write_prompt_trajectories_to_tq(
                     uid=uid,
-                    session_index=session_index,
-                    trajectories=trajectories,
-                    sample_fields=session_sample_fields,
+                    session_outcomes=successful_outcomes,
                     global_steps=global_steps,
                     partition_id=partition_id,
                 )
-            except Exception as e:
-                logger.exception(f"TQ write failed for uid={uid} session={session_index}: {e}")
-                failed_sessions += 1
-                failure_reasons.append(f"TQ write error: {e}")
-            else:
-                success_sessions += 1
-                success_outputs += len(trajectories)
-                # One session is one episode; its trajectories all carry the same
-                # session-level completion flag, so this counts episodes, not tokens.
-                if any(traj.reward_info.get("finished") is False for traj in trajectories):
-                    unfinished_episodes += 1
+            except Exception as exc:
+                self._clear_prompt_tq_entries(
+                    uid=uid,
+                    session_outcomes=successful_outcomes,
+                    partition_id=partition_id,
+                )
+                failure_reasons.append(f"TQ group write error: {exc}")
+                logger.exception("strict TQ group write failed for uid=%s", uid)
+                await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "failure"})
+                return {
+                    "num_success_sessions": 0,
+                    "num_failed_sessions": num_sessions,
+                    "num_success_outputs": 0,
+                    "num_unfinished_episodes": 0,
+                    "num_failed_uids": 1,
+                    "failure_reasons": failure_reasons,
+                }
+
+            success_sessions = len(successful_outcomes)
+            success_outputs = sum(len(trajectories) for _, trajectories, _ in successful_outcomes)
+            unfinished_episodes = sum(
+                any(trajectory.reward_info.get("finished") is False for trajectory in trajectories)
+                for _, trajectories, _ in successful_outcomes
+            )
+        else:
+            # Preserve the permissive path's per-session writes for backwards
+            # compatibility: one bad sibling does not discard good episodes.
+            for session_index, trajectories, session_sample_fields in successful_outcomes:
+                try:
+                    await self._write_session_trajectories_to_tq(
+                        uid=uid,
+                        session_index=session_index,
+                        trajectories=trajectories,
+                        sample_fields=session_sample_fields,
+                        global_steps=global_steps,
+                        partition_id=partition_id,
+                    )
+                except Exception as e:
+                    logger.exception(f"TQ write failed for uid={uid} session={session_index}: {e}")
+                    failed_sessions += 1
+                    failure_reasons.append(f"TQ write error: {e}")
+                else:
+                    success_sessions += 1
+                    success_outputs += len(trajectories)
+                    # One session is one episode; its trajectories all carry the same
+                    # session-level completion flag, so this counts episodes, not tokens.
+                    if any(traj.reward_info.get("finished") is False for traj in trajectories):
+                        unfinished_episodes += 1
 
         if success_sessions > 0:
             await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "finished"})
@@ -1050,6 +1122,30 @@ class GatewayAgentFramework(AgentFramework):
         global_steps: int | None,
         partition_id: str,
     ) -> None:
+        keys, fields, tags = self._build_session_tq_payload(
+            uid=uid,
+            session_index=session_index,
+            trajectories=trajectories,
+            sample_fields=sample_fields,
+            global_steps=global_steps,
+        )
+
+        await tq.async_kv_batch_put(
+            keys=keys,
+            fields=_list_of_tq_fields_to_tensordict(fields),
+            tags=tags,
+            partition_id=partition_id,
+        )
+
+    def _build_session_tq_payload(
+        self,
+        *,
+        uid: str,
+        session_index: int,
+        trajectories: list[Trajectory],
+        sample_fields: dict[str, object],
+        global_steps: int | None,
+    ) -> tuple[list[str], list[dict[str, object]], list[dict[str, object]]]:
         keys = []
         fields = []
         tags = []
@@ -1064,6 +1160,31 @@ class GatewayAgentFramework(AgentFramework):
             keys.append(f"{uid}_{session_index}_{index}")
             fields.append(field)
             tags.append(tag)
+        return keys, fields, tags
+
+    async def _write_prompt_trajectories_to_tq(
+        self,
+        *,
+        uid: str,
+        session_outcomes: list[tuple[int, list[Trajectory], dict[str, object]]],
+        global_steps: int | None,
+        partition_id: str,
+    ) -> None:
+        """Write one complete strict rollout group as a single TQ batch."""
+        keys: list[str] = []
+        fields: list[dict[str, object]] = []
+        tags: list[dict[str, object]] = []
+        for session_index, trajectories, sample_fields in session_outcomes:
+            session_keys, session_fields, session_tags = self._build_session_tq_payload(
+                uid=uid,
+                session_index=session_index,
+                trajectories=trajectories,
+                sample_fields=sample_fields,
+                global_steps=global_steps,
+            )
+            keys.extend(session_keys)
+            fields.extend(session_fields)
+            tags.extend(session_tags)
 
         await tq.async_kv_batch_put(
             keys=keys,
@@ -1071,6 +1192,21 @@ class GatewayAgentFramework(AgentFramework):
             tags=tags,
             partition_id=partition_id,
         )
+
+    def _clear_prompt_tq_entries(
+        self,
+        *,
+        uid: str,
+        session_outcomes: list[tuple[int, list[Trajectory], dict[str, object]]],
+        partition_id: str,
+    ) -> None:
+        """Remove candidate group keys after a strict TQ write failure."""
+        trajectory_keys = [
+            f"{uid}_{session_index}_{index}"
+            for session_index, trajectories, _sample_fields in session_outcomes
+            for index in range(len(trajectories))
+        ]
+        tq.kv_clear(partition_id=partition_id, keys=[uid, *trajectory_keys])
 
     def _trajectory_to_tq_field_and_tag(
         self,

@@ -142,6 +142,7 @@ def init_config(args: argparse.Namespace, *, task_configs: list[dict], served_mo
                     "task_config_path": args.task_config,
                     "model_name": served_model_name,
                     "report_reward": True,
+                    "require_reward_post": args.require_reward_post,
                 },
             }
         },
@@ -360,6 +361,11 @@ def main() -> None:
         type=int,
         default=GLOBAL_CONCURRENCY,
         help="Max in-flight gateway sessions for the runner (runner.max_concurrent_sessions; env GLOBAL_CONCURRENCY).",
+    )
+    parser.add_argument(
+        "--require-reward-post",
+        action="store_true",
+        help="Fail a rollout when the session reward endpoint is absent or does not acknowledge the reward POST.",
     )
     parser.add_argument(
         "--log-dir",

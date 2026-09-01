@@ -240,5 +240,7 @@ def test_example_task_config_contains_all_operator_only_keys() -> None:
     )
 
     assert resolved["workdir"] is None
+    assert resolved["agent"]["model"]["max_total_tokens"] == 1024
+    assert resolved["agent"]["model"]["max_tokens_per_turn"] == 1024
     expected_digest = "sha256:" + hashlib.sha256(Path("examples/dsh/verifier.py").read_bytes()).hexdigest()
     assert resolved["verifier_code_digest"] == expected_digest

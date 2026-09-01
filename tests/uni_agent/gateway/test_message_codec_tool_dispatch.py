@@ -130,7 +130,7 @@ async def test_tool_call_dispatch_uses_sglang_for_sglang_rollout(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_call_dispatch_uses_vllm_for_vllm_rollout_with_name_mapping(monkeypatch):
+async def test_tool_call_dispatch_uses_hermes_for_qwen25_vllm_rollout(monkeypatch):
     from uni_agent.gateway.session.codec import MessageCodec
 
     seen = {}
@@ -154,7 +154,7 @@ async def test_tool_call_dispatch_uses_vllm_for_vllm_rollout_with_name_mapping(m
 
     assert content == ""
     assert calls[0].arguments == '{"query":"x"}'
-    assert seen["vllm"] == ("raw", TOOLS, "qwen3_xml")
+    assert seen["vllm"] == ("raw", TOOLS, "hermes")
 
 
 @pytest.mark.asyncio

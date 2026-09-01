@@ -114,6 +114,7 @@ async def _build_framework_with_agent_runners(
     val_n: int = 1,
     log_dir: str | None = None,
     mask_unfinished_episode: bool = False,
+    fail_on_rollout_error: bool = False,
     trajectory_postprocessor_fqn: str | None = None,
     trajectory_postprocessor_kwargs: object | None = None,
 ):
@@ -122,6 +123,7 @@ async def _build_framework_with_agent_runners(
     agent_framework_cfg: dict[str, object] = {
         "agent_runners": agent_runners,
         "mask_unfinished_episode": mask_unfinished_episode,
+        "fail_on_rollout_error": fail_on_rollout_error,
     }
     if log_dir is not None:
         agent_framework_cfg["log_dir"] = log_dir
@@ -245,6 +247,7 @@ class _FakeTransferQueue:
     def __init__(self):
         self.puts = []
         self.batch_puts = []
+        self.clears = []
 
     async def async_kv_put(self, *, key, partition_id, tag):
         self.puts.append({"key": key, "partition_id": partition_id, "tag": dict(tag)})
@@ -258,6 +261,9 @@ class _FakeTransferQueue:
                 "partition_id": partition_id,
             }
         )
+
+    def kv_clear(self, *, keys, partition_id):
+        self.clears.append({"keys": list(keys), "partition_id": partition_id})
 
 
 @pytest.fixture
@@ -1071,6 +1077,58 @@ async def test_generate_sequences_keeps_successful_sessions_when_one_session_fai
     assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "finished"}}]
     assert len(runtime.aborted_sessions) == 1
     assert runtime.aborted_sessions[0].startswith("session-sample-0-rollout-1-")
+
+
+@pytest.mark.asyncio
+async def test_generate_sequences_can_fail_closed_on_any_rollout_error(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [_trajectory()],
+            "session-sample-0-rollout-1": [_trajectory()],
+        }
+    )
+
+    async def agent_runner(*, raw_prompt, session, sample_index, tools_kwargs, **kwargs):
+        if session.session_id.startswith("session-sample-0-rollout-1-"):
+            raise RuntimeError("reward acknowledgement failed")
+
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(agent_runner)},
+        gateway_manager=runtime,
+        n=2,
+        val_n=2,
+        fail_on_rollout_error=True,
+    )
+
+    with pytest.raises(RuntimeError, match="rollout failure"):
+        await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    # Strict GRPO groups are atomic: the successful sibling must not be left in
+    # TQ when its partner's reward ACK/rollout fails.
+    assert fake_tq.batch_puts == []
+    assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "failure"}}]
+
+
+@pytest.mark.asyncio
+async def test_strict_success_group_is_written_as_one_tq_batch(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [_trajectory()],
+            "session-sample-0-rollout-1": [_trajectory()],
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        n=2,
+        val_n=2,
+        fail_on_rollout_error=True,
+    )
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    assert [*fake_tq.batch_puts[0]["keys"]] == ["uid-0_0_0", "uid-0_1_0"]
+    assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "finished"}}]
 
 
 @pytest.mark.asyncio

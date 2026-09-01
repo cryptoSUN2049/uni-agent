@@ -133,3 +133,121 @@ async def test_run_task_binds_raw_prompt_to_sample_task_config(monkeypatch, tmp_
     )
 
     assert captured["config"].prompt == source_prompt
+
+
+def _patch_fake_task(monkeypatch, tmp_path):
+    config_path = tmp_path / "tasks.yaml"
+    config_path.write_text("- name: test_task")
+    captured = {}
+
+    class _FakeTask:
+        def __init__(self, config):
+            self.config = config
+
+        async def run(self):
+            captured["ran"] = True
+            return TaskResult(reward=1.0, accuracy=1.0, finished=True)
+
+    monkeypatch.setattr(task_runner, "get_task", _FakeTask)
+    return config_path, captured
+
+
+def _runner_kwargs():
+    return {
+        "raw_prompt": [{"role": "user", "content": "hello"}],
+        "tools_kwargs": {"task": {"name": "test_task", "metadata": {}}},
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_task_requires_report_reward_when_ack_is_required():
+    with pytest.raises(ValueError, match="requires report_reward=True"):
+        await task_runner.run_task(
+            session=SessionHandle(session_id="test-session"),
+            report_reward=False,
+            require_reward_post=True,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("report_reward", "require_reward_post", "message"),
+    [
+        ("true", False, "report_reward must be a bool"),
+        (False, "true", "require_reward_post must be a bool"),
+    ],
+)
+async def test_run_task_rejects_non_boolean_reward_flags(report_reward, require_reward_post, message):
+    with pytest.raises(ValueError, match=message):
+        await task_runner.run_task(
+            session=SessionHandle(session_id="test-session"),
+            report_reward=report_reward,
+            require_reward_post=require_reward_post,
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_task_ack_required_rejects_missing_reward_endpoint(monkeypatch, tmp_path):
+    config_path, captured = _patch_fake_task(monkeypatch, tmp_path)
+    kwargs = _runner_kwargs()
+    kwargs["task_config_path"] = str(config_path)
+
+    with pytest.raises(RuntimeError, match="reward-info endpoint"):
+        await task_runner.run_task(
+            session=SessionHandle(session_id="test-session", base_url="http://gateway/v1"),
+            report_reward=True,
+            require_reward_post=True,
+            **kwargs,
+        )
+    assert captured["ran"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_task_ack_required_rejects_failed_reward_post(monkeypatch, tmp_path):
+    config_path, _ = _patch_fake_task(monkeypatch, tmp_path)
+    kwargs = _runner_kwargs()
+    kwargs["task_config_path"] = str(config_path)
+
+    async def _failed_post(_url, _result):
+        return False
+
+    monkeypatch.setattr(task_runner, "_post_reward_info", _failed_post)
+    with pytest.raises(RuntimeError, match="reward acknowledgement"):
+        await task_runner.run_task(
+            session=SessionHandle(
+                session_id="test-session",
+                base_url="http://gateway/v1",
+                reward_info_url="http://gateway/reward",
+            ),
+            report_reward=True,
+            require_reward_post=True,
+            **kwargs,
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_task_ack_required_accepts_successful_reward_post(monkeypatch, tmp_path):
+    config_path, _ = _patch_fake_task(monkeypatch, tmp_path)
+    kwargs = _runner_kwargs()
+    kwargs["task_config_path"] = str(config_path)
+    seen = {}
+
+    async def _successful_post(url, result):
+        seen["url"] = url
+        seen["reward"] = result.reward
+        return True
+
+    monkeypatch.setattr(task_runner, "_post_reward_info", _successful_post)
+    result = await task_runner.run_task(
+        session=SessionHandle(
+            session_id="test-session",
+            base_url="http://gateway/v1",
+            reward_info_url="http://gateway/reward",
+        ),
+        report_reward=True,
+        require_reward_post=True,
+        **kwargs,
+    )
+
+    assert result.reward == 1.0
+    assert seen == {"url": "http://gateway/reward", "reward": 1.0}
