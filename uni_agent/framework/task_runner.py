@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from uni_agent.rlinsight_adapter import task_span
 from uni_agent.tasks import TaskConfigResolver, TaskResult, get_task
+from uni_agent.tasks.base import build_reward_info
 from uni_agent.tasks.config import _deep_merge
 
 if TYPE_CHECKING:
@@ -165,11 +166,4 @@ async def _post_reward_info(reward_info_url: str, result: TaskResult) -> bool:
 
 def _reward_info_from_result(result: TaskResult) -> dict[str, Any]:
     """Build the session reward payload consumed by the trajectory framework."""
-    if result.finished is not None and type(result.finished) is not bool:
-        raise ValueError("TaskResult.finished must be a bool or None")
-    reward_info: dict[str, Any] = {"reward": result.reward}
-    if result.accuracy is not None:
-        reward_info["acc"] = result.accuracy
-    if result.finished is not None:
-        reward_info["finished"] = result.finished
-    return reward_info
+    return build_reward_info(result)

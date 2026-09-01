@@ -12,6 +12,7 @@ A *task* is the top-level unit a trainer / evaluator instantiates. The base
 from __future__ import annotations
 
 import dataclasses
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -35,6 +36,8 @@ class TaskConfig(BaseModel):
     subclass (keeping subclass fields like ``max_steps``). ``SerializeAsAny`` keeps
     those fields on ``model_dump`` too, so a dict round-trip is lossless.
     """
+
+    task_config_only_fields: ClassVar[frozenset[str]] = frozenset()
 
     name: str = Field(default="", description="Registered task name (key in TASK_REGISTRY).")
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig, description="Execution sandbox.")
@@ -89,12 +92,50 @@ class TaskConfig(BaseModel):
 
 @dataclasses.dataclass
 class TaskResult:
-    """Outcome of one task episode."""
+    """Outcome of one task episode.
+
+    ``extra_info`` is evaluator-facing diagnostics and is not sent to the
+    rollout Gateway. ``reward_info`` is the explicit, bounded session metadata
+    that a runner may post alongside the scalar reward (for example the hash of
+    a fresh DSH verifier receipt). Keeping the two fields separate prevents a
+    task's potentially large logs or model output from crossing the Gateway
+    boundary accidentally.
+    """
 
     reward: Any
     accuracy: float | None = None
     finished: bool | None = None
     extra_info: dict[str, Any] | None = None
+    reward_info: dict[str, Any] | None = None
+
+
+def build_reward_info(result: TaskResult) -> dict[str, Any]:
+    """Build the trusted session reward payload for a task result.
+
+    Scalar fields are owned by the framework. Task-provided metadata is
+    additive and cannot overwrite ``reward``, ``acc``, or ``finished``. The
+    metadata is checked for strict JSON serializability before it crosses the
+    HTTP boundary.
+    """
+    if result.finished is not None and type(result.finished) is not bool:
+        raise ValueError("TaskResult.finished must be a bool or None")
+    payload: dict[str, Any] = {"reward": result.reward}
+    if result.accuracy is not None:
+        payload["acc"] = result.accuracy
+    if result.finished is not None:
+        payload["finished"] = result.finished
+    if result.reward_info is not None:
+        if not isinstance(result.reward_info, dict):
+            raise ValueError("TaskResult.reward_info must be an object or None")
+        reserved = sorted(set(result.reward_info).intersection(payload))
+        if reserved:
+            raise ValueError(f"TaskResult.reward_info cannot overwrite framework fields: {reserved}")
+        try:
+            json.dumps(result.reward_info, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("TaskResult.reward_info must be strict-JSON serializable") from exc
+        payload.update(result.reward_info)
+    return payload
 
 
 class Task(ABC):
