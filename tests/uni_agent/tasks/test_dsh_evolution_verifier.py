@@ -216,6 +216,9 @@ def test_evolution_dataset_builder_binds_fixture_and_patch_identity(tmp_path: Pa
         patches=["examples/dsh/evolution.patch.yml"],
     )
     task = rows["train"][0]["extra_info"]["tools_kwargs"]["task"]
+    prompt = rows["train"][0]["prompt"][0]["content"]
+    assert "Call exactly one tool in each assistant turn" in prompt
+    assert "never batch or parallelize tool calls" in prompt
     assert task["metadata"]["fixture_digest"] == _digest(fixture.read_bytes())
     assert task["metadata"]["candidate_scope"] == "session-local-host-only"
     assert "sha256:" in task["metadata"]["patches_sha256"]

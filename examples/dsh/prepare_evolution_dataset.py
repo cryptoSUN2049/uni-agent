@@ -66,6 +66,8 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
             "role": "user",
             "content": (
                 "Operate the official DSH runtime to complete one bounded Harness evolution episode. "
+                "Call exactly one tool in each assistant turn and wait for its result before choosing the next "
+                "tool; never batch or parallelize tool calls. "
                 f"The immutable fixture is at the absolute path `{fixture_path}`. First call `str_replace_editor` "
                 "with command `view` on that exact path; do not edit it and do not use bash. Then call "
                 "`cordis_inspect_list`, followed immediately by this compact query (do not query Service or Event): "
