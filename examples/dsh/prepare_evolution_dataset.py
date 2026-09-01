@@ -53,10 +53,7 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
 def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> list[dict[str, str]]:
     """Render a bounded task instruction without revealing the reference output."""
     operation_bodies = {
-        "normalize_whitespace": (
-            "a.text.replaceAll(String.fromCharCode(10), ' ').replaceAll(String.fromCharCode(9), ' ')"
-            ".trim().split(' ').filter(Boolean).join(' ')"
-        ),
+        "normalize_whitespace": "a.text.replace(new RegExp(String.fromCharCode(92)+'s+','g'),' ').trim()",
         "redact_email": ("a.text.replace(new RegExp(\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\", 'g'), '<EMAIL>')"),
         "mask_digits": "a.text.replace(/[0-9]/g, '#')",
     }
@@ -79,10 +76,11 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
                 "3–6 letter idPrefix, `inject: ['tools']`, and a tool named "
                 f"`{candidate_tool_name}`. This is a host-only package: the `code` object must contain only a "
                 "`host` key; omit `client` entirely (do not send `client:''`). Set `code.host` by copying this "
-                "compact JavaScript expression exactly, replacing only `TOOL` and `BODY`: "
-                "`return Object.assign({inject:['tools']},{apply:ctx=>harness.registerTool(ctx,harness.defineTool({"
+                "known-valid compact JavaScript expression exactly, replacing only `TOOL` and `BODY` (keep every "
+                "closing `}` and `)`): "
+                "`return {inject:['tools'],apply(ctx){return harness.registerTool(ctx,harness.defineTool({"
                 "name:'TOOL',description:'transform',parameters:{text:{type:'string',required:true}},output:{"
-                "schema:{type:'string'},render:(_a,v)=>[{type:'text',text:v}]},execute:a=>BODY}))})`; "
+                "schema:{type:'string'},render(_a,v){return[{type:'text',text:v}]}},execute(a){return BODY}}))}}`; "
                 "Replace `BODY` with "
                 "exactly this expression for "
                 f"`{operation}`: `{operation_body}`. The candidate "
