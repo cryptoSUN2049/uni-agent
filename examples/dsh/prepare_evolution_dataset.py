@@ -96,7 +96,10 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
                 "The host code is intentionally complete and syntactically valid; preserve every quote, brace, "
                 "and parenthesis. The operation is "
                 f"`{operation}` and the candidate tool is `{candidate_tool_name}`. After define succeeds, read "
-                "the returned separate `pluginId` and `packageId`, then call `cordis_run` with those IDs and "
+                "the returned separate `pluginId` and `packageId`. Because this is a fresh session with the fixed "
+                "idPrefix `evo`, the first successful result is displayed as `Defined evo-1/pkg-1`: pass "
+                "`pluginId`=`evo-1` and `packageId`=`pkg-1` (the suffix only), never `evo-1/pkg-1`. Then call "
+                "`cordis_run` with those IDs and "
                 '`{"mode":"run"}`. After a successful run, the very next action MUST be one call to the visible '
                 f'`{candidate_tool_name}` tool with arguments `{{"text": <the exact input string read from the '
                 "fixture>}}`. A plain answer at this point "
