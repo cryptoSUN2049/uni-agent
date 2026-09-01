@@ -166,6 +166,10 @@ def init_config(args: argparse.Namespace, *, task_configs: list[dict], served_mo
     config.data.return_raw_chat = True
     config.data.max_prompt_length = DEFAULT_PROMPT_LENGTH
     config.data.max_response_length = response_length
+    # Match the bounded Qwen3 training launcher.  Otherwise the model's
+    # default thinking block consumes the short episode budget and the
+    # inference proof no longer exercises the same token/mask contract.
+    OmegaConf.update(config, "data.apply_chat_template_kwargs.enable_thinking", False, force_add=True)
 
     return config
 
