@@ -48,6 +48,43 @@ def test_qwen_vllm_parser_uses_tool_schema_for_argument_types():
     assert json.loads(calls[0].arguments) == {"query": "docs", "limit": 2}
 
 
+def test_hermes_recovery_accepts_only_terminal_missing_json_closers():
+    from uni_agent.gateway.session.codec import _recover_hermes_tool_calls
+
+    text = '<tool_call>\n{"name":"search","arguments":{"query":"docs"}\n</tool_call>'
+    recovered = _recover_hermes_tool_calls(text)
+    assert recovered is not None
+    content, calls = recovered
+    assert content == ""
+    assert calls[0].name == "search"
+    assert json.loads(calls[0].arguments) == {"query": "docs"}
+
+    malformed_middle = (
+        '<tool_call>\n{"name":"search","arguments":{"query":"docs"}\n</tool_call>'
+        '<tool_call>\n{"name":"search","arguments":{"query":}\n</tool_call>'
+    )
+    assert _recover_hermes_tool_calls(malformed_middle) is None
+
+
+def test_vllm_hermes_parser_falls_back_to_bounded_recovery(monkeypatch):
+    from vllm.tool_parsers import ToolParserManager
+
+    from uni_agent.gateway.session.codec import MessageCodec
+
+    class EmptyParser:
+        def __init__(self, tokenizer):
+            self.tokenizer = tokenizer
+
+        def extract_tool_calls(self, text, request):
+            return SimpleNamespace(tools_called=False, content=text, tool_calls=[])
+
+    monkeypatch.setattr(ToolParserManager, "get_tool_parser", classmethod(lambda cls, name: EmptyParser))
+    text = '<tool_call>\n{"name":"search","arguments":{"query":"docs"}\n</tool_call>'
+    content, calls = MessageCodec(FakeTokenizer())._process_tool_calls_vllm(text, TOOLS, "hermes")
+    assert content == ""
+    assert calls[0].name == "search"
+
+
 @pytest.mark.parametrize(
     "constructor_accepts_tools",
     [False, True],

@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import logging
+import re
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -16,6 +18,8 @@ from uuid import uuid4
 from verl.utils.tokenizer import normalize_token_ids
 from verl.utils.tokenizer.chat_template import apply_chat_template as _apply_chat_template
 from verl.utils.tokenizer.chat_template import initialize_turn_separator
+
+logger = logging.getLogger(__name__)
 
 # Map backend stop_reason values into the gateway's internal finish_reason vocabulary.
 _FINISH_REASON_MAP = {
@@ -41,6 +45,75 @@ _VLLM_TOOL_PARSER_ALIASES = {
     "qwen25": "hermes",
     "qwen3": "hermes",
 }
+
+_HERMES_TOOL_CALL_PATTERN = re.compile(r"<tool_call>\\s*(.*?)\\s*</tool_call>", re.DOTALL)
+_MAX_HERMES_RECOVERY_CLOSERS = 4
+
+
+def _load_json_with_missing_closers(value: str) -> Any | None:
+    """Parse one Hermes payload, allowing only missing terminal JSON closers."""
+    text = value.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    expected: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{" or char == "[":
+            expected.append("}" if char == "{" else "]")
+        elif char == "}" or char == "]":
+            if not expected or expected.pop() != char:
+                return None
+    if in_string or escaped or not expected or len(expected) > _MAX_HERMES_RECOVERY_CLOSERS:
+        return None
+    try:
+        return json.loads(text + "".join(reversed(expected)))
+    except json.JSONDecodeError:
+        return None
+
+
+def _recover_hermes_tool_calls(text: str) -> tuple[str, list[Any]] | None:
+    """Recover complete Hermes calls when a final call lost JSON closers.
+
+    vLLM's Hermes parser treats one malformed parallel call as an all-or-nothing
+    response. The recovery is deliberately narrower: it accepts only complete
+    ``<tool_call>`` blocks whose JSON becomes valid by appending terminal
+    structural closers, and only ignores a malformed final block. Raw response
+    tokens remain unchanged; this affects action decoding only.
+    """
+    matches = list(_HERMES_TOOL_CALL_PATTERN.finditer(text))
+    if not matches:
+        return None
+    calls: list[Any] = []
+    for index, match in enumerate(matches):
+        value = _load_json_with_missing_closers(match.group(1))
+        if not isinstance(value, dict):
+            if index != len(matches) - 1:
+                return None
+            continue
+        name = value.get("name")
+        arguments = value.get("arguments")
+        if not isinstance(name, str) or not name or not isinstance(arguments, dict):
+            if index != len(matches) - 1:
+                return None
+            continue
+        calls.append(SimpleNamespace(name=name, arguments=json.dumps(arguments, ensure_ascii=False)))
+    if not calls:
+        return None
+    return text[: matches[0].start()], calls
 
 
 def _canonical_tools_hash(tools: list[dict[str, Any]]) -> str:
@@ -327,8 +400,19 @@ class MessageCodec:
                 self._tool_parser_cache[cache_key] = parser
 
         request = SimpleNamespace(tools=vllm_tools, tool_choice="auto", skip_special_tokens=True)
-        parsed = parser.extract_tool_calls(text, request)
+        try:
+            parsed = parser.extract_tool_calls(text, request)
+        except Exception:
+            recovered = _recover_hermes_tool_calls(text) if parser_name == "hermes" else None
+            if recovered is not None:
+                logger.warning("vLLM Hermes parser failed; recovered complete terminal tool-call prefix")
+                return recovered
+            raise
         if not parsed.tools_called:
+            recovered = _recover_hermes_tool_calls(text) if parser_name == "hermes" else None
+            if recovered is not None:
+                logger.warning("vLLM Hermes parser rejected a terminal partial call; recovered complete calls")
+                return recovered
             return text, []
         return parsed.content or "", [tool_call.function for tool_call in parsed.tool_calls]
 
