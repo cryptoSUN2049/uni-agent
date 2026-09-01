@@ -67,12 +67,13 @@ This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier
 
 ## One-update online RL proof
 
-The dedicated dense recipe uses VERL V1 sync training, two rollouts per prompt for GRPO, LoRA rank 32, and one training step. It does not reuse `train_qwen3_27b.sh`, which targets a different Qwen3 MoE/Megatron topology.
+The dedicated dense recipe uses VERL V1 sync training, two rollouts per prompt for GRPO, LoRA, and one training step. It does not reuse `train_qwen3_27b.sh`, which targets a different Qwen3 MoE/Megatron topology. Set `LOW_VRAM=1` for the tested 24 GB RTX 4090 profile; the profile uses BF16 actor weights, FSDP parameter offload, vLLM eager execution, an 8 GB CPU KV offload budget, short context, LoRA rank 4, and a LoRA-only checkpoint.
 
 Before launching, prepare an `eligible` DSH seed Parquet and a held-out Parquet, install one consistent VERL/vLLM environment, and install both DSH SDK/runtime wheels in that same environment. This checkout pins the VERL submodule at `fefb080262e1c015a0ea05f958822a6a512dc795`; from `verl/`, use `python manage_envs.py sync vllm fsdp` (or the equivalent `uv sync --python 3.12 --extra vllm --extra fsdp`) and then install Uni-Agent/DSH without letting the root `requirements-test.txt` downgrade VERL's vLLM stack. Review the model license and set the explicit acknowledgement:
 
 ```sh
 MODEL_LICENSE_APPROVED=1 \
+LOW_VRAM=1 \
 MODEL_ID=Qwen/Qwen3-4B \
 MODEL_PATH=/absolute/path/to/Qwen3-4B \
 TRAIN_FILE=/absolute/path/to/dsh-train.parquet \
@@ -82,12 +83,17 @@ bash examples/dsh/train_qwen3_4b_online_rl.sh
 
 The script requires `config.json` and `tokenizer_config.json`, checks the Qwen3 dense architecture (and the official Qwen3-4B dimensions when the default model ID is used), and fails before Ray starts when the DSH runtime or TransferQueue is unavailable. It writes agent traces, rollout/validation dumps, and a VERL checkpoint under `RUN_ROOT`. A successful run must show non-empty `response_ids`/`response_mask`, a fresh reward acknowledgement, `trainer/global_step=1`, and a checkpoint containing the actor state.
 
+The observed 4090 proof used torch 2.10.0+cu128, vLLM 0.18.1, Ray 2.58, Transformers 4.57.6, TensorDict 0.10.0, and the VERL source checkout at the pinned v0.9-compatible commit. The active DSH runtime came from the Linux source build, and the run used the Qwen3-4B revision recorded in the DSH worktree evidence. Keep these pins together; mixing the VERL source resolver with an older vLLM stack is not supported by this path.
+
+The first bounded run completed one actor update and wrote readable LoRA model, optimizer, and extra-state files. Its DSH trajectories each had `finished=true`, five response tokens with a mask sum of five, and a fresh verifier receipt with `event_count=16`. The deterministic smoke verifier returned reward 1 for every sample, so GRPO advantages, policy loss, and gradient norm were all zero. This is a plumbing and checkpoint-reload proof, not evidence of policy improvement.
+
 The checked-in Task Config selects the official `sdk-minimal` DSH profile for this bounded proof. This profile keeps the model-visible prompt below the trajectory capacity; a later full-`sdk` capability run must increase `MAX_PROMPT_LENGTH` after measuring its tool schema with the selected tokenizer.
 
 To exercise checkpoint reload without another optimizer step, point the same launcher at the saved `global_step_1` directory and run validation only:
 
 ```sh
 MODEL_LICENSE_APPROVED=1 \
+LOW_VRAM=1 \
 MODEL_ID=Qwen/Qwen3-4B \
 MODEL_PATH=/absolute/path/to/Qwen3-4B \
 TRAIN_FILE=/absolute/path/to/dsh-train.parquet \
