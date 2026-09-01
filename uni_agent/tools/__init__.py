@@ -20,17 +20,16 @@ episode when the policy calls one -- see ``_FINISH_TOOLS``).
 
 from __future__ import annotations
 
+# Built-in tools self-register on import; keep these imports for that side effect.
+from . import edit_file, finish, shell, submit  # noqa: F401
 from .base import (
     Tool,
+    Toolbox,
     ToolCallFormatError,
     ToolError,
     ToolResult,
     ToolStatus,
-    Toolbox,
 )
-
-# Built-in tools self-register on import; keep these imports for that side effect.
-from . import edit_file, finish, shell, submit  # noqa: F401
 
 __all__ = [
     "Tool",

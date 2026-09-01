@@ -4,7 +4,8 @@ The agent runs *outside* the task image. A :class:`Tool` pairs a schema (what th
 model sees) with an async :meth:`run` that drives the container through the
 :class:`~uni_agent.sandbox.SandboxBackend` data plane. A tool is built with its
 sandbox and owns whatever state it needs -- the editor keeps undo history and the
-shell holds a live channel opened lazily and closed in :meth:`close`. Every :meth:`run` returns a normalized :class:`ToolResult`
+shell holds a live channel opened lazily and closed in :meth:`close`. Every
+:meth:`run` returns a normalized :class:`ToolResult`
 (``text`` + ``status``); :class:`Toolbox` binds a set of tools to one sandbox.
 """
 
@@ -153,18 +154,14 @@ class Tool(abc.ABC):
             # Auto-parse: raw kwargs -> typed, validated config object.
             self.config: BaseModel | None = self.config_model(**kwargs)
         elif kwargs:
-            raise TypeError(
-                f"{type(self).__name__} takes no tool kwargs, got {sorted(kwargs)}"
-            )
+            raise TypeError(f"{type(self).__name__} takes no tool kwargs, got {sorted(kwargs)}")
         else:
             self.config = None
 
     def schema(self) -> dict:
         """Return the OpenAI function schema shown to the model."""
         if self.args_model is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} must set `args_model` or override schema()"
-            )
+            raise NotImplementedError(f"{type(self).__name__} must set `args_model` or override schema()")
         return build_function_schema(self.name, self.description, self.args_model)
 
     @classmethod
@@ -208,9 +205,7 @@ def register_tool(name: str):
 
     def decorator(cls: type[Tool]) -> type[Tool]:
         if name in TOOL_REGISTRY and TOOL_REGISTRY[name] is not cls:
-            raise ValueError(
-                f"Tool {name!r} already registered: {TOOL_REGISTRY[name]!r} vs {cls!r}"
-            )
+            raise ValueError(f"Tool {name!r} already registered: {TOOL_REGISTRY[name]!r} vs {cls!r}")
         if not cls.__dict__.get("name"):
             cls.name = name
         TOOL_REGISTRY[name] = cls
@@ -341,7 +336,10 @@ class Toolbox:
                 last_exc = exc
             logger.warning(
                 "tool %r failed to start (attempt %d/%d): %r",
-                tool.name, attempt, retry, last_exc,
+                tool.name,
+                attempt,
+                retry,
+                last_exc,
             )
             if attempt < retry:
                 await asyncio.sleep(2 * attempt)

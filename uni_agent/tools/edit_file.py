@@ -136,9 +136,7 @@ class EditFileTool(Tool):
         try:
             args = StrReplaceEditorArguments(**args).model_dump()
         except ValidationError as exc:
-            details = "; ".join(
-                f"`{'.'.join(str(p) for p in err['loc'])}`: {err['msg']}" for err in exc.errors()
-            )
+            details = "; ".join(f"`{'.'.join(str(p) for p in err['loc'])}`: {err['msg']}" for err in exc.errors())
             return f"Invalid arguments for str_replace_editor: {details}"
         command = args.get("command")
         path = args.get("path")
@@ -231,9 +229,7 @@ class EditFileTool(Tool):
         self._history[path].append("")
         return f"File created successfully at: {path}"
 
-    async def _str_replace(
-        self, sandbox: SandboxBackend, path: str, old_str: str | None, new_str: str | None
-    ) -> str:
+    async def _str_replace(self, sandbox: SandboxBackend, path: str, old_str: str | None, new_str: str | None) -> str:
         if not old_str:
             return "Parameter `old_str` is required for command: str_replace and must be a non-empty string."
         file_content = (await self._read(sandbox, path)).expandtabs()
@@ -269,9 +265,7 @@ class EditFileTool(Tool):
         success_msg += "Review the changes and make sure they are as expected. Edit the file again if necessary."
         return success_msg
 
-    async def _insert(
-        self, sandbox: SandboxBackend, path: str, insert_line: int | None, new_str: str | None
-    ) -> str:
+    async def _insert(self, sandbox: SandboxBackend, path: str, insert_line: int | None, new_str: str | None) -> str:
         if insert_line is None:
             return "Parameter `insert_line` is required for command: insert"
         if new_str is None:
