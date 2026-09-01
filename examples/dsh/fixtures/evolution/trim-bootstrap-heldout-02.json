@@ -1,0 +1,5 @@
+{
+  "schema": "dsh.evolution.fixture.v1",
+  "operation": "trim",
+  "input": "  rollback remains explicit  "
+}

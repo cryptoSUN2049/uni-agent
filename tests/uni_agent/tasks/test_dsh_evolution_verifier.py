@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from examples.dsh.evolution_verifier import verify
-from examples.dsh.prepare_evolution_dataset import build_evolution_rows
+from examples.dsh.prepare_evolution_dataset import _host_code, build_evolution_rows
 
 
 def _digest(value: bytes) -> str:
@@ -195,6 +195,12 @@ def test_evolution_verifier_derives_digest_when_report_omits_it(monkeypatch, tmp
     result = verify()
     assert result["accuracy"] == 1.0
     assert result["extra_info"]["expected_result_digest"].startswith("sha256:")
+
+
+def test_evolution_verifier_supports_trim_bootstrap_operation() -> None:
+    code = _host_code(candidate_tool_name="trim_payload", operation="trim")
+    assert "execute:a=>a.text.trim()" in code
+    assert code.endswith("}))}}")
 
 
 def test_evolution_dataset_builder_binds_fixture_and_patch_identity(tmp_path: Path) -> None:

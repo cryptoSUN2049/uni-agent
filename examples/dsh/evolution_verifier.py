@@ -171,7 +171,9 @@ def _fixture_expected(fixture: dict[str, Any]) -> tuple[str, str]:
     value = fixture.get("input")
     if not isinstance(operation, str) or not isinstance(value, str):
         raise RuntimeError("evolution fixture requires string operation and input")
-    if operation == "normalize_whitespace":
+    if operation == "trim":
+        expected = value.strip()
+    elif operation == "normalize_whitespace":
         expected = " ".join(value.split())
     elif operation == "redact_email":
         expected = re.sub(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", "<EMAIL>", value)

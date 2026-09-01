@@ -50,55 +50,61 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
     return scenarios
 
 
-def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> list[dict[str, str]]:
-    """Render a bounded task instruction without revealing the reference output."""
+def _host_code(*, candidate_tool_name: str, operation: str) -> str:
+    """Return the smallest valid host package body for one allowlisted operation."""
     operation_bodies = {
-        "normalize_whitespace": "a.text.replace(new RegExp(String.fromCharCode(92)+'s+','g'),' ').trim()",
+        "trim": "a.text.trim()",
+        "normalize_whitespace": "a.text.replace(/\\s+/g,' ').trim()",
         "redact_email": ("a.text.replace(new RegExp(\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\", 'g'), '<EMAIL>')"),
         "mask_digits": "a.text.replace(/[0-9]/g, '#')",
     }
-    operation_body = operation_bodies[operation]
+    return (
+        "return {inject:['tools'],apply(ctx){return harness.registerTool(ctx,"
+        "harness.defineTool({name:'"
+        + candidate_tool_name
+        + "',description:'transform',parameters:{text:{type:'string',required:true}},"
+        "output:{schema:{type:'string'},render:(_a,v)=>[{type:'text',text:v}]},"
+        "execute:a=>" + operation_bodies[operation] + "}))}}"
+    )
+
+
+def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> list[dict[str, str]]:
+    """Render a bounded task instruction without revealing the reference output."""
+    code = _host_code(candidate_tool_name=candidate_tool_name, operation=operation)
+    define_arguments = json.dumps(
+        {
+            "plugin": {"kind": "new", "idPrefix": "evo"},
+            "name": "Bounded transform",
+            "purpose": "Apply the fixture transformation",
+            "code": {"host": code},
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return [
         {
             "role": "user",
             "content": (
-                "Operate the official DSH runtime to complete one bounded Harness evolution episode. "
-                "Call exactly one tool in each assistant turn and wait for its result before choosing the next "
-                "tool; never batch or parallelize tool calls. "
-                f"The immutable fixture is at the absolute path `{fixture_path}`. First call `str_replace_editor` "
-                "with command `view` on that exact path; do not edit it and do not use bash. Then call "
-                "`cordis_inspect_list`, followed immediately by this compact query (do not query Service or Event): "
-                '`cordis_inspect_query({"platform":"host","provider":"Builtin","method":"listBuiltins","input":{}})`. '
-                "The fixture operation is "
-                f"`{operation}`. Its only allowed meanings are normalize_whitespace (collapse whitespace and trim), "
-                "redact_email (replace email addresses with `<EMAIL>`), or mask_digits (replace each ASCII digit "
-                "with `#`). Define exactly one host-only dynamic Plugin with `cordis_define`: use a new lowercase "
-                "3–6 letter idPrefix, `inject: ['tools']`, and a tool named "
-                f"`{candidate_tool_name}`. This is a host-only package: the `code` object must contain only a "
-                "`host` key; omit `client` entirely (do not send `client:''`). Set `code.host` by copying this "
-                "known-valid compact JavaScript expression exactly, replacing only `TOOL` and `BODY` (keep every "
-                "closing `}` and `)`): "
-                "`return {inject:['tools'],apply(ctx){return harness.registerTool(ctx,harness.defineTool({"
-                "name:'TOOL',description:'transform',parameters:{text:{type:'string',required:true}},output:{"
-                "schema:{type:'string'},render(_a,v){return[{type:'text',text:v}]}},execute(a){return BODY}}))}}`; "
-                "Replace `BODY` with "
-                "exactly this expression for "
-                f"`{operation}`: `{operation_body}`. The candidate "
-                "must return only the transformed string. Never access process, require, "
-                "filesystem writes, shell, credentials, or network APIs from the candidate. Run the Package with "
-                "`cordis_run` mode `run`. This is a strict state machine: after a successful run, the next action "
-                "must be exactly one call to the visible candidate tool with `{'text': <fixture input>}`; do not "
-                "finish early. After a successful candidate result, call `cordis_stop`, then `cordis_undefine`; "
-                "only after both cleanup results may you emit the final JSON. `cordis_define` returns "
-                "`Defined <pluginId>/<packageId>`; pass the "
-                "two separate IDs exactly as returned to `cordis_run` (for example, `pluginId:'norm-1'` and "
-                "`packageId:'pkg-1'`, never `packageId:'norm-1/pkg-1'`). Use the returned short package ID in the "
-                "final report. Make one define attempt and do not repeat it after an error. Do not claim success if "
-                "a tool result is an error. "
-                'Finish with exactly one JSON object and no prose: {"status":"promote" or "reject", '
-                '"plugin_id":"<returned id>", "package_id":"<returned id>", '
-                '"evidence":["short trace-grounded facts"]}. The verifier derives the result digest from the '
-                "candidate result; never invent or guess a hash."
+                "Run one bounded DSH dynamic-plugin episode. Call exactly one tool in each assistant turn, wait "
+                "for its result, and never batch or parallelize tool calls. The fixture is immutable at the absolute "
+                "path "
+                f'`{fixture_path}`. First call `str_replace_editor` with `{{"command":"view","path":'
+                f"{json.dumps(fixture_path)}}}`; never edit it, call bash, or use filesystem APIs. Next call "
+                "`cordis_inspect_list` once. Then call `cordis_define` with this exact JSON arguments object; "
+                "copy it exactly and do not add a client half:\n"
+                f"{define_arguments}\n"
+                "The host code is intentionally complete and syntactically valid; preserve every quote, brace, "
+                "and parenthesis. The operation is "
+                f"`{operation}` and the candidate tool is `{candidate_tool_name}`. After define succeeds, read "
+                "the returned separate `pluginId` and `packageId`, then call `cordis_run` with those IDs and "
+                '`{"mode":"run"}`. After a successful run, the very next action MUST be one call to the visible '
+                f'`{candidate_tool_name}` tool with arguments `{{"text": <the exact input string read from the '
+                "fixture>}}`. A plain answer at this point "
+                "is invalid. After the candidate result, call `cordis_stop` and then `cordis_undefine`; do not "
+                "emit a final answer until both cleanup results succeed. Make one define attempt only. Finish "
+                'with exactly one JSON object and no prose: {"status":"promote","plugin_id":"<returned id>",'
+                '"package_id":"<returned id>","evidence":["inspected","ran","transformed","cleaned"]}. '
+                "The verifier computes the result independently; never invent a digest."
             ),
         }
     ]
@@ -170,8 +176,11 @@ def build_evolution_rows(
         if not isinstance(fixture, dict) or fixture.get("schema") != "dsh.evolution.fixture.v1":
             raise ValueError(f"scenario row {row_number} fixture has the wrong schema")
         operation = fixture.get("operation")
-        if operation not in {"normalize_whitespace", "redact_email", "mask_digits"}:
+        if operation not in {"trim", "normalize_whitespace", "redact_email", "mask_digits"}:
             raise ValueError(f"scenario row {row_number} fixture operation is not allowlisted")
+        fixture_input = fixture.get("input")
+        if not isinstance(fixture_input, str):
+            raise ValueError(f"scenario row {row_number} fixture input must be a string")
         metadata = {
             "task_id": task_id,
             "task_version": task_version,
