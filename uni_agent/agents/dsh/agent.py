@@ -248,8 +248,11 @@ class DshAgent(Agent):
         }
         if cfg.reasoning_effort is not None:
             env["DSH_UA_REASONING_EFFORT"] = cfg.reasoning_effort
-        if cfg.model.max_total_tokens is not None:
-            env["DSH_UA_MAX_TOKENS"] = str(cfg.model.max_total_tokens)
+        max_tokens = cfg.model.max_tokens_per_turn
+        if max_tokens is None:
+            max_tokens = cfg.model.max_total_tokens
+        if max_tokens is not None:
+            env["DSH_UA_MAX_TOKENS"] = str(max_tokens)
         argv = [
             cfg.runner_python,
             "-m",

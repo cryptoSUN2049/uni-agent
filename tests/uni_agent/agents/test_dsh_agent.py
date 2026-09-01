@@ -43,9 +43,10 @@ class _FakeSandbox:
         return self.writes[path]
 
 
-def _config(**kwargs) -> DshAgentConfig:
+def _config(*, model: ModelConfig | None = None, **kwargs) -> DshAgentConfig:
     return DshAgentConfig(
-        model=ModelConfig(
+        model=model
+        or ModelConfig(
             base_url="http://gateway.example/sessions/abc123/v1",
             api_key="gateway-key",
             model_name="Qwen3-27B",
@@ -151,6 +152,37 @@ def test_run_passes_ordered_profile_patches_to_helper() -> None:
     ]
     assert result.info["profile"] == "sdk-minimal"
     assert result.info["patches_sha256"] == "sha256:" + "d" * 64
+
+
+def test_run_uses_per_turn_token_cap_before_episode_budget() -> None:
+    sandbox = _FakeSandbox(output=_helper_result())
+    model = ModelConfig(
+        base_url="http://gateway.example/sessions/abc123/v1",
+        api_key="gateway-key",
+        model_name="Qwen3-27B",
+        max_total_tokens=4096,
+        max_tokens_per_turn=1024,
+    )
+
+    asyncio.run(DshAgent(_config(model=model)).run(sandbox=sandbox, messages=[{"role": "user", "content": "x"}]))
+
+    call = next(call for call in sandbox.exec_calls if call["argv"][0:2] == ["python", "-m"])
+    assert call["env"]["DSH_UA_MAX_TOKENS"] == "1024"
+
+
+def test_run_falls_back_to_episode_budget_when_no_per_turn_cap() -> None:
+    sandbox = _FakeSandbox(output=_helper_result())
+    model = ModelConfig(
+        base_url="http://gateway.example/sessions/abc123/v1",
+        api_key="gateway-key",
+        model_name="Qwen3-27B",
+        max_total_tokens=4096,
+    )
+
+    asyncio.run(DshAgent(_config(model=model)).run(sandbox=sandbox, messages=[{"role": "user", "content": "x"}]))
+
+    call = next(call for call in sandbox.exec_calls if call["argv"][0:2] == ["python", "-m"])
+    assert call["env"]["DSH_UA_MAX_TOKENS"] == "4096"
 
 
 def test_run_rejects_bad_helper_result_and_cleans_input() -> None:
