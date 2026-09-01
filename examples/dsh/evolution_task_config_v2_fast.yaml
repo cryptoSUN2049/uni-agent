@@ -1,0 +1,34 @@
+# Qwen3-4B expanded-corpus profile. Keep the operator-owned DSH composition
+# identical to evolution_task_config.yaml while bounding each tool turn for a
+# multi-prompt 24 GiB GPU run.
+- name: dsh_architecture
+  sandbox:
+    provider: local
+    runtime_timeout: 1200
+  agent:
+    name: dsh
+    model:
+      max_total_tokens: 3072
+      max_tokens_per_turn: 512
+    runner_python: python
+    runner_module: uni_agent.agents.dsh.runner
+    default_workdir: "."
+    profile: sdk-minimal
+    reasoning_effort: "off"
+    patches:
+      - examples/dsh/evolution.patch.yml
+    provider: deepseek-official
+    keep_trace: true
+    run_timeout: 1200
+  verifier_command:
+    - python
+    - -m
+    - examples.dsh.evolution_verifier
+  verifier_timeout: 300
+  result_root: /tmp/uni-agent-dsh-task/results
+  workdir: null
+  require_trace: true
+  environment_digest: null
+  verifier_id: null
+  verifier_version: null
+  verifier_code_digest: sha256:6715dbe97e671ca9151a68ec7676bf00a35072f591b1dfacd3814db1b773e991

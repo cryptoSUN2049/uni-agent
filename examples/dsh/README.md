@@ -96,6 +96,12 @@ The builder must report `train=16, holdout=8`. Keep the generated Parquet
 outside Git and record its SHA-256 plus the scenario-file and verifier digests
 in the run manifest.
 
+For a 24 GiB GPU, `evolution_task_config_v2_fast.yaml` keeps the same DSH
+profile, patch stack, and verifier but bounds the task to 512 tokens per turn
+and 3072 tokens per episode. Use it only for the expanded-corpus throughput
+run; compare its budget and config digest in the manifest instead of silently
+mixing it with the bootstrap result.
+
 `evolution_task_config.yaml` selects `sdk-minimal` plus
 `evolution.patch.yml`, which adds the official DSH
 `@deepseek-ai/dsh-cordis-host-runner` and `@deepseek-ai/dsh-tool-cordis` rows as
