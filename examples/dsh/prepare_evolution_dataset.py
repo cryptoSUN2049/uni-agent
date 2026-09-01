@@ -86,16 +86,19 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
                 f"`{operation}`: `{operation_body}`. The candidate "
                 "must return only the transformed string. Never access process, require, "
                 "filesystem writes, shell, credentials, or network APIs from the candidate. Run the Package with "
-                "`cordis_run` mode `run`, call the new tool with the fixture input, then call `cordis_stop` and "
-                "`cordis_undefine` for cleanup. `cordis_define` returns `Defined <pluginId>/<packageId>`; pass the "
+                "`cordis_run` mode `run`. This is a strict state machine: after a successful run, the next action "
+                "must be exactly one call to the visible candidate tool with `{'text': <fixture input>}`; do not "
+                "finish early. After a successful candidate result, call `cordis_stop`, then `cordis_undefine`; "
+                "only after both cleanup results may you emit the final JSON. `cordis_define` returns "
+                "`Defined <pluginId>/<packageId>`; pass the "
                 "two separate IDs exactly as returned to `cordis_run` (for example, `pluginId:'norm-1'` and "
                 "`packageId:'pkg-1'`, never `packageId:'norm-1/pkg-1'`). Use the returned short package ID in the "
                 "final report. Make one define attempt and do not repeat it after an error. Do not claim success if "
                 "a tool result is an error. "
                 'Finish with exactly one JSON object and no prose: {"status":"promote" or "reject", '
                 '"plugin_id":"<returned id>", "package_id":"<returned id>", '
-                '"result_digest":"sha256:<digest of the transformed UTF-8 string>", '
-                '"evidence":["short trace-grounded facts"]}.'
+                '"evidence":["short trace-grounded facts"]}. The verifier derives the result digest from the '
+                "candidate result; never invent or guess a hash."
             ),
         }
     ]

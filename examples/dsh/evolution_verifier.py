@@ -354,11 +354,13 @@ def _score_episode(
     report = _parse_report(response)
     report_valid = isinstance(report, dict)
     if report_valid:
+        reported_digest = report.get("result_digest")
+        digest_valid = reported_digest is None or reported_digest == expected_digest
         report_valid = (
             report.get("status") in {"promote", "reject", "rollback"}
             and report.get("plugin_id") == plugin_id
             and report.get("package_id") == package_id
-            and report.get("result_digest") == expected_digest
+            and digest_valid
             and isinstance(report.get("evidence"), list)
             and bool(report["evidence"])
         )

@@ -182,6 +182,21 @@ def test_evolution_verifier_hard_vetoes_shell_access(monkeypatch, tmp_path: Path
     assert "shell_access" in result["extra_info"]["hard_veto"]
 
 
+def test_evolution_verifier_derives_digest_when_report_omits_it(monkeypatch, tmp_path: Path) -> None:
+    envelope, _bytes, env = _episode(tmp_path, candidate_output="a b")
+    report = json.loads(envelope["response"])
+    report.pop("result_digest")
+    envelope["response"] = json.dumps(report, separators=(",", ":"))
+    result_path = Path(env["DSH_TASK_RESULT_PATH"])
+    envelope_bytes = (json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    result_path.write_bytes(envelope_bytes)
+    env["DSH_ARTIFACT_SHA256"] = _digest(envelope_bytes)
+    _set_env(monkeypatch, env)
+    result = verify()
+    assert result["accuracy"] == 1.0
+    assert result["extra_info"]["expected_result_digest"].startswith("sha256:")
+
+
 def test_evolution_dataset_builder_binds_fixture_and_patch_identity(tmp_path: Path) -> None:
     scenario_path = tmp_path / "scenarios.jsonl"
     fixture_root = tmp_path / "root"
