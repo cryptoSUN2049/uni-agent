@@ -50,24 +50,31 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
     return scenarios
 
 
-def _prompt(*, fixture_path: str, candidate_tool_name: str) -> list[dict[str, str]]:
-    """Render the fixed task instruction without revealing the reference output."""
+def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> list[dict[str, str]]:
+    """Render a bounded task instruction without revealing the reference output."""
     return [
         {
             "role": "user",
             "content": (
                 "Operate the official DSH runtime to complete one bounded Harness evolution episode. "
-                f"The immutable fixture is at `{fixture_path}`. First use `str_replace_editor` with command "
-                "`view` to read that file; do not edit it and do not use bash. Then call "
-                "`cordis_inspect_list` or `cordis_inspect_query` to confirm the live contract before writing code. "
-                "Define exactly one host-only dynamic Plugin with `cordis_define`: use a new lowercase 3–6 letter "
-                "idPrefix, `inject: ['tools']`, and a tool named "
-                f"`{candidate_tool_name}`. The dynamic tool must accept one string parameter named `text`, apply "
-                "the operation described by the fixture, and return only the transformed string. Use the "
-                "`harness.defineTool`/`harness.registerTool` API shown by DSH inspection; never access process, "
-                "require, filesystem writes, shell, credentials, or network APIs from the candidate. Run the "
-                "Package with `cordis_run` mode `run`, call the new tool with the fixture input, then call "
-                "`cordis_stop` and `cordis_undefine` for cleanup. Do not claim success if a tool result is an error. "
+                f"The immutable fixture is at the absolute path `{fixture_path}`. First call `str_replace_editor` "
+                "with command `view` on that exact path; do not edit it and do not use bash. Then call "
+                "`cordis_inspect_list`, followed immediately by this compact query (do not query Service or Event): "
+                '`cordis_inspect_query({"platform":"host","provider":"Builtin","method":"listBuiltins","input":{}})`. '
+                "The fixture operation is "
+                f"`{operation}`. Its only allowed meanings are normalize_whitespace (collapse whitespace and trim), "
+                "redact_email (replace email addresses with `<EMAIL>`), or mask_digits (replace each ASCII digit "
+                "with `#`). Define exactly one host-only dynamic Plugin with `cordis_define`: use a new lowercase "
+                "3–6 letter idPrefix, `inject: ['tools']`, and a tool named "
+                f"`{candidate_tool_name}`. Use this API skeleton, changing only the tool name/description and "
+                "operation body: `return { inject: ['tools'], apply(ctx) { const tool = harness.defineTool({ "
+                "name: 'TOOL', description: 'bounded transform', parameters: { text: { type: 'string', "
+                "required: true } }, output: { schema: { type: 'string' }, render(_args, value) { return [{ type: "
+                "'text', text: value }] } }, async execute(args) { return args.text } }); harness.registerTool(ctx, "
+                "tool); } }`. The candidate must return only the transformed string. Never access process, require, "
+                "filesystem writes, shell, credentials, or network APIs from the candidate. Run the Package with "
+                "`cordis_run` mode `run`, call the new tool with the fixture input, then call `cordis_stop` and "
+                "`cordis_undefine` for cleanup. Do not claim success if a tool result is an error. "
                 'Finish with exactly one JSON object and no prose: {"status":"promote" or "reject", '
                 '"plugin_id":"<returned id>", "package_id":"<returned id>", '
                 '"result_digest":"sha256:<digest of the transformed UTF-8 string>", '
@@ -142,6 +149,9 @@ def build_evolution_rows(
         fixture = json.loads(fixture_bytes.decode("utf-8"))
         if not isinstance(fixture, dict) or fixture.get("schema") != "dsh.evolution.fixture.v1":
             raise ValueError(f"scenario row {row_number} fixture has the wrong schema")
+        operation = fixture.get("operation")
+        if operation not in {"normalize_whitespace", "redact_email", "mask_digits"}:
+            raise ValueError(f"scenario row {row_number} fixture operation is not allowlisted")
         metadata = {
             "task_id": task_id,
             "task_version": task_version,
@@ -149,7 +159,7 @@ def build_evolution_rows(
             "scenario_id": scenario_id,
             "fixture_path": fixture_value,
             "fixture_digest": _digest_bytes(fixture_bytes),
-            "operation": fixture.get("operation"),
+            "operation": operation,
             "candidate_tool_name": candidate_tool_name,
             "variant": variant,
             "candidate_scope": "session-local-host-only",
@@ -166,7 +176,11 @@ def build_evolution_rows(
         rows_by_split[split].append(
             {
                 "data_source": f"dsh/harness-evolution/{scenario_id}",
-                "prompt": _prompt(fixture_path=fixture_value, candidate_tool_name=candidate_tool_name),
+                "prompt": _prompt(
+                    fixture_path=str(fixture_path),
+                    candidate_tool_name=candidate_tool_name,
+                    operation=operation,
+                ),
                 "extra_info": {"tools_kwargs": {"task": {"name": "dsh_architecture", "metadata": metadata}}},
             }
         )
