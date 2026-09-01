@@ -259,7 +259,7 @@ def test_evolution_task_config_selects_dynamic_profile_and_verifier() -> None:
                 "environment_digest": _digest(b"environment"),
                 "verifier_id": "dsh-harness-evolution-verifier",
                 "verifier_version": "1",
-                "verifier_code_digest": "sha256:a48c2b26fb4e9c245ecaced33b50a8edae1ad058c31a18f26ee923b1c87bbcae",
+                "verifier_code_digest": "sha256:6715dbe97e671ca9151a68ec7676bf00a35072f591b1dfacd3814db1b773e991",
             },
         }
     )
