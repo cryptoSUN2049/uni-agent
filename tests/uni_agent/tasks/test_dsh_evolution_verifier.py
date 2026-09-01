@@ -265,4 +265,5 @@ def test_evolution_task_config_selects_dynamic_profile_and_verifier() -> None:
     )
     assert resolved["agent"]["profile"] == "sdk-minimal"
     assert resolved["agent"]["patches"] == ["examples/dsh/evolution.patch.yml"]
+    assert resolved["agent"]["reasoning_effort"] == "off"
     assert resolved["verifier_command"][-1] == "examples.dsh.evolution_verifier"

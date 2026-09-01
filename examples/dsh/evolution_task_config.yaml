@@ -15,6 +15,9 @@
     runner_module: uni_agent.agents.dsh.runner
     default_workdir: "."
     profile: sdk-minimal
+    # The first Qwen3-4B proof disables hidden reasoning so tool-call
+    # adherence and the verifier signal remain observable and reproducible.
+    reasoning_effort: "off"
     patches:
       - examples/dsh/evolution.patch.yml
     provider: deepseek-official
