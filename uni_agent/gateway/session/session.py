@@ -412,6 +412,7 @@ class GatewaySession:
         incoming_message_prefix_hashes = self._extend_message_prefix_hashes([], messages)
         selection = self._select_chain(
             tools=tools,
+            messages=messages,
             incoming_message_prefix_hashes=incoming_message_prefix_hashes,
         )
         rollback_applied = False
@@ -554,6 +555,7 @@ class GatewaySession:
         self,
         *,
         tools: list[dict[str, Any]] | None,
+        messages: list[dict[str, Any]],
         incoming_message_prefix_hashes: list[str],
     ) -> tuple[ChainState, bool] | None:
         ranked_candidates = []
@@ -574,6 +576,8 @@ class GatewaySession:
                 chain=chain,
                 incoming_message_prefix_hashes=incoming_message_prefix_hashes,
             ):
+                if not self._incremental_messages_supported(messages[len(chain.message_history) :]):
+                    continue
                 ranked_candidates.append((chain, len(chain.message_history), True))
                 continue
             if self._enable_last_assistant_rollback:
@@ -582,6 +586,12 @@ class GatewaySession:
                     deepest_rollback_service_value = assistant_start_len
                 elif assistant_start_len == deepest_rollback_service_value:
                     deepest_rollback_candidates.append(chain)
+
+        deepest_rollback_candidates = [
+            chain
+            for chain in deepest_rollback_candidates
+            if self._incremental_messages_supported(messages[chain.last_assistant_start.message_history_len :])
+        ]
 
         if len(deepest_rollback_candidates) == 1:
             rollback_chain = deepest_rollback_candidates[0]
@@ -603,6 +613,18 @@ class GatewaySession:
             ),
         )
         return selected_chain, not exact_prefix_match
+
+    def _incremental_messages_supported(self, messages: list[dict[str, Any]]) -> bool:
+        """Return whether a message suffix can be passed to the codec incrementally.
+
+        ``MessageCodec.encode_incremental`` permits an assistant message only as
+        the first item of a suffix. A schema change can make an older chain look
+        reusable even though the request now contains several completed
+        assistant turns after that chain's boundary. Such a request must use a
+        fresh full encoding instead of mutating the old chain and surfacing a
+        codec error to the gateway.
+        """
+        return not any(message.get("role") == "assistant" for message in messages[1:])
 
     def _is_chain_prefix_hash_match(
         self,

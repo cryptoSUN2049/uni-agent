@@ -887,6 +887,46 @@ async def test_multiple_chains_tools_gate_chain_reuse():
 
 
 @pytest.mark.asyncio
+async def test_multiple_chains_tool_schema_round_trip_splits_when_incremental_suffix_has_assistants():
+    """Re-encode a branch when a tool-schema round trip makes its suffix non-incremental."""
+    first_tools = [{"type": "function", "function": {"name": "first", "parameters": {"type": "object"}}}]
+    second_tools = [{"type": "function", "function": {"name": "second", "parameters": {"type": "object"}}}]
+    session = _session("tools-round-trip")
+    backend = SequencedBackend(["FIRST", "SECOND", "THIRD", "FOURTH"])
+    first_prompt = [{"role": "user", "content": "start"}]
+    first_continuation = [
+        *first_prompt,
+        {"role": "assistant", "content": "FIRST"},
+        {"role": "user", "content": "continue"},
+    ]
+    schema_changed = [
+        *first_continuation,
+        {"role": "assistant", "content": "SECOND"},
+        {"role": "user", "content": "run with the second schema"},
+    ]
+    schema_round_trip = [
+        *schema_changed,
+        {"role": "assistant", "content": "THIRD"},
+        {"role": "user", "content": "return to the first schema"},
+    ]
+
+    await _run(session, backend, first_prompt, tools=first_tools)
+    await _run(session, backend, first_continuation, tools=first_tools)
+    await _run(session, backend, schema_changed, tools=second_tools)
+
+    await _run(session, backend, schema_round_trip, tools=first_tools)
+
+    assert backend.calls[-1]["prompt_ids"] == session._codec.encode_full(schema_round_trip, tools=first_tools)
+    assert [chain.chain_id for chain in session.active_chains] == [1, 2, 3]
+    trajectories = await session.finalize()
+    assert [_decode_response_ids(trajectory.response_ids) for trajectory in trajectories] == [
+        "FIRSTuser:continue\nassistant:SECOND",
+        "THIRD",
+        "FOURTH",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_multiple_chains_committed_assistant_tip_hash_round_trips_through_echoed_request():
     """Match a continuation that echoes the canonical committed assistant message."""
     session = _session("hash-round-trip")
