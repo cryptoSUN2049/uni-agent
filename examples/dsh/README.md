@@ -6,6 +6,10 @@ The included `verifier.py` is a deterministic smoke fixture. It checks exact tra
 
 The first training proof uses the official dense `Qwen/Qwen3-4B` checkpoint as the 3B-class target. The public Qwen release does not provide a `Qwen/Qwen3-3B` repository; set `MODEL_ID` and `MODEL_PATH` to a compatible private or mirrored 3B checkpoint when one is available. The model-size choice is an integration gate, not a claim that the policy already understands DSH or can perform self-evolution. The launcher fails closed on a missing DSH runtime, an unacknowledged reward POST, or any failed rollout session.
 
+## Human-operated, restart-safe runbook
+
+For a repeatable RunPod or single-GPU run, use [`ops/README.md`](ops/README.md) instead of copying a long Hydra command. The five versioned entrypoints prepare the v2 seed data, launch detached or foreground training, report manifest/PID/rollout progress, validate a checkpoint in an independent run root, and tear down only a verified DSH process. The runbook keeps code and data digests in `manifest.json` and `run-manifest.json`; it never needs a repository API key or a checked-in `.env` file.
+
 ## Seed metadata
 
 Rows produced from a released DSH task seed must carry the immutable identity fields below in `extra_info.tools_kwargs.task.metadata`:
