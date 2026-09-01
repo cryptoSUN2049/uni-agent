@@ -39,6 +39,14 @@ if [[ -f "${RUN_ROOT}/run.log" ]]; then
   echo "-- recent metrics/errors --"
   grep -E "Training Progress|global_step|Final validation|generate_sequences summary|run_task done|Saving checkpoint|Traceback|ERROR|segfault|No available memory" "${RUN_ROOT}/run.log" | tail -80 || true
 fi
+echo "-- rollout progress --"
+task_log_count="$(find "${RUN_ROOT}/agent-logs" -name task.log -type f 2>/dev/null | wc -l | tr -d ' ')"
+finished_task_count="$(grep -R -l --include=task.log "run_task done:" "${RUN_ROOT}/agent-logs" 2>/dev/null | wc -l | tr -d ' ' || true)"
+failed_task_count="$(grep -R -l --include=task.log "finished=False\|failure" "${RUN_ROOT}/agent-logs" 2>/dev/null | wc -l | tr -d ' ' || true)"
+echo "task_logs_started=${task_log_count} task_logs_finished=${finished_task_count} task_logs_with_failure=${failed_task_count}"
+if [[ "${finished_task_count}" -gt 0 ]]; then
+  echo "finished_rewards=$(grep -Rho --include=task.log "run_task done:.* reward=[^ ]*" "${RUN_ROOT}/agent-logs" 2>/dev/null | sed -E 's/.* reward=([^ ]*).*/\1/' | paste -sd, -)"
+fi
 echo "-- checkpoints --"
 find "${RUN_ROOT}/checkpoints" -type f -printf '%p %s bytes\\n' 2>/dev/null | sort | tail -40 || true
 if command -v nvidia-smi >/dev/null 2>&1; then
