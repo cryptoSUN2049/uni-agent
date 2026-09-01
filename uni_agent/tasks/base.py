@@ -130,11 +130,11 @@ def build_reward_info(result: TaskResult) -> dict[str, Any]:
         reserved = sorted(set(result.reward_info).intersection(payload))
         if reserved:
             raise ValueError(f"TaskResult.reward_info cannot overwrite framework fields: {reserved}")
-        try:
-            json.dumps(result.reward_info, ensure_ascii=False, allow_nan=False)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("TaskResult.reward_info must be strict-JSON serializable") from exc
         payload.update(result.reward_info)
+    try:
+        json.dumps(payload, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("TaskResult reward payload must be strict-JSON serializable") from exc
     return payload
 
 

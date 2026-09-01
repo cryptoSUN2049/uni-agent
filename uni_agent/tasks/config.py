@@ -127,6 +127,23 @@ class TaskConfigResolver:
             )
 
         file_defaults = self.defaults_by_name.get(str(task_name), {})
+        from .registry import TASK_MODULES, TASK_REGISTRY, get_task_cls
+
+        if str(task_name) in TASK_REGISTRY or str(task_name) in TASK_MODULES:
+            protected = get_task_cls(str(task_name)).config_model.task_config_only_fields
+        else:
+            protected = frozenset()
+        if protected:
+            sample_overrides = sorted(protected.intersection(sample_config))
+            if sample_overrides:
+                raise ValueError(
+                    f"sample Task Config for {task_name!r} cannot set task-config-only fields: {sample_overrides}"
+                )
+            missing_defaults = sorted(field for field in protected if field not in file_defaults)
+            if missing_defaults:
+                raise ValueError(
+                    f"Task Config for {task_name!r} is missing task-config-only fields: {missing_defaults}"
+                )
         resolved = _deep_merge(dict(file_defaults), dict(sample_config))
         if "prompt_template" in file_defaults:
             resolved["prompt_template"] = file_defaults["prompt_template"]

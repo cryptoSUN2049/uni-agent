@@ -1,0 +1,39 @@
+# Local S0 task configuration for the official DSH adapter.
+#
+# The release seed must provide these metadata fields for every row:
+#   task_id, task_version, split, environment_digest (or environment_ref),
+#   verifier_id, verifier_version, verifier_code_digest, and
+#   expected_response_sha256 (the latter is used only by the smoke verifier).
+#
+# The runtime model endpoint is injected by run_task from the per-session
+# Gateway. Do not put a provider key or a fixed Gateway URL in this file.
+- name: dsh_architecture
+  sandbox:
+    provider: local
+    runtime_timeout: 1800
+  agent:
+    name: dsh
+    runner_python: python
+    runner_module: uni_agent.agents.dsh.runner
+    default_workdir: "."
+    profile: sdk
+    provider: deepseek-official
+    keep_trace: true
+    run_timeout: 1800
+  verifier_command:
+    - python
+    - -m
+    - examples.dsh.verifier
+  verifier_timeout: 300
+  result_root: /tmp/uni-agent-dsh-task/results
+  workdir: null
+  require_trace: true
+  # These keys are deliberately explicit even when resolved from each released
+  # row. The resolver protects them from sample overrides and requires every
+  # operator-owned key to be present in the file.
+  environment_digest: null
+  verifier_id: null
+  verifier_version: null
+  # Digest of the checked-in S0 verifier.py. Replace together with
+  # verifier_command when moving to a benchmark verifier.
+  verifier_code_digest: sha256:8c3f588dd1137b57155962a0fd083627e66ea891ef1c6fa6ce1f05218cac515e
