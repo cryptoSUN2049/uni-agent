@@ -52,6 +52,15 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
 
 def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> list[dict[str, str]]:
     """Render a bounded task instruction without revealing the reference output."""
+    operation_bodies = {
+        "normalize_whitespace": "return String(args.text).split(/\\s+/).filter(Boolean).join(' ')",
+        "redact_email": (
+            "return args.text.replace(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+            "[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+/g, '<EMAIL>')"
+        ),
+        "mask_digits": "return args.text.replace(/[0-9]/g, '#')",
+    }
+    operation_body = operation_bodies[operation]
     return [
         {
             "role": "user",
@@ -71,10 +80,16 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
                 "name: 'TOOL', description: 'bounded transform', parameters: { text: { type: 'string', "
                 "required: true } }, output: { schema: { type: 'string' }, render(_args, value) { return [{ type: "
                 "'text', text: value }] } }, async execute(args) { return args.text } }); harness.registerTool(ctx, "
-                "tool); } }`. The candidate must return only the transformed string. Never access process, require, "
+                "tool); } }; use exactly this execute body for "
+                f"`{operation}`: `{operation_body}`. The candidate "
+                "must return only the transformed string. Never access process, require, "
                 "filesystem writes, shell, credentials, or network APIs from the candidate. Run the Package with "
                 "`cordis_run` mode `run`, call the new tool with the fixture input, then call `cordis_stop` and "
-                "`cordis_undefine` for cleanup. Do not claim success if a tool result is an error. "
+                "`cordis_undefine` for cleanup. `cordis_define` returns `Defined <pluginId>/<packageId>`; pass the "
+                "two separate IDs exactly as returned to `cordis_run` (for example, `pluginId:'norm-1'` and "
+                "`packageId:'pkg-1'`, never `packageId:'norm-1/pkg-1'`). Use the returned short package ID in the "
+                "final report. Make one define attempt and do not repeat it after an error. Do not claim success if "
+                "a tool result is an error. "
                 'Finish with exactly one JSON object and no prose: {"status":"promote" or "reject", '
                 '"plugin_id":"<returned id>", "package_id":"<returned id>", '
                 '"result_digest":"sha256:<digest of the transformed UTF-8 string>", '
