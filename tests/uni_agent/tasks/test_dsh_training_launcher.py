@@ -40,6 +40,9 @@ def test_qwen3_4b_launcher_prints_strict_online_rl_contract():
         "fail_on_rollout_error=True",
         "trainer.save_freq=1",
         "trainer.total_training_steps=1",
+        "data.train_max_samples=1",
+        "data.val_max_samples=1",
+        "data.shuffle=False",
     ):
         assert expected in command
 

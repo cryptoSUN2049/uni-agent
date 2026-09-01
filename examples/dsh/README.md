@@ -65,6 +65,59 @@ python examples/inference/parallel_infer_verl.py \
 
 This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier, and TransferQueue materialization. It is an integration smoke, not evidence of a parameter update or capability improvement.
 
+## Bounded Harness evolution task
+
+`evolution_task_config.yaml` selects `sdk-minimal` plus
+`evolution.patch.yml`, which adds the official DSH
+`@deepseek-ai/dsh-cordis-host-runner` and `@deepseek-ai/dsh-tool-cordis` rows as
+an ordered startup overlay. The overlay is passed through `DshAgentConfig.patches`
+and is never supplied by a dataset row. `evolution_verifier.py` independently
+recomputes the fixture transformation and scores the canonical trace; it gives
+zero to shell/filesystem mutation, missing pre-define inspection, stale identity,
+or an unallowlisted tool. A model-written final JSON is evidence only, not the
+reward source.
+
+Build the small train/holdout release from the checked-in scenarios (the
+environment digest must be replaced with the digest of the actual pinned DSH
+runtime before a release):
+
+```sh
+VERIFIER_DIGEST="sha256:$(sha256sum examples/dsh/evolution_verifier.py | cut -d' ' -f1)"
+python examples/dsh/prepare_evolution_dataset.py \
+  --scenario-file examples/dsh/evolution_scenarios.jsonl \
+  --fixture-root . \
+  --output-dir /absolute/path/to/dsh-evolution-parquet \
+  --environment-digest sha256:<pinned-runtime-digest> \
+  --verifier-code-digest "${VERIFIER_DIGEST}" \
+  --patch examples/dsh/evolution.patch.yml
+```
+
+Run an inference-only tool-call smoke before paying for an optimizer step. The
+smoke must show `cordis_inspect_* → cordis_define → cordis_run → candidate tool
+→ cordis_stop → cordis_undefine` in the DSH trace and at least one non-zero
+behavior component. Then use the same Parquet files and task config with the
+online-RL launcher. For a 24 GiB RTX 4090, start with `MAX_PROMPT_LENGTH=4096`,
+`MAX_RESPONSE_LENGTH=512`, `TRAIN_MAX_SAMPLES=2`, `VAL_MAX_SAMPLES=2`,
+`ROLLOUT_N=2`, and `TOTAL_TRAINING_STEPS=2`; reduce only after recording an
+OOM or context-budget reason. The launcher remains the single VERL entrypoint:
+
+```sh
+MODEL_LICENSE_APPROVED=1 LOW_VRAM=1 \
+MODEL_ID=Qwen/Qwen3-4B MODEL_PATH=/absolute/path/to/Qwen3-4B \
+TASK_CONFIG=examples/dsh/evolution_task_config.yaml \
+TRAIN_FILE=/absolute/path/to/dsh-evolution-parquet/train.parquet \
+TEST_FILE=/absolute/path/to/dsh-evolution-parquet/holdout.parquet \
+MAX_PROMPT_LENGTH=4096 MAX_RESPONSE_LENGTH=512 \
+TRAIN_MAX_SAMPLES=2 VAL_MAX_SAMPLES=2 ROLLOUT_N=2 TOTAL_TRAINING_STEPS=2 \
+bash examples/dsh/train_qwen3_4b_online_rl.sh
+```
+
+This command is a complete online-RL attempt only when the run records fresh
+reward acknowledgements, non-uniform group rewards, non-zero advantages and
+gradients, two optimizer steps, a reloadable checkpoint, and held-out results
+against the frozen base. A successful one-update integration fixture with a
+constant reward remains a plumbing proof.
+
 ## One-update online RL proof
 
 The dedicated dense recipe uses VERL V1 sync training, two rollouts per prompt for GRPO, LoRA, and one training step. It does not reuse `train_qwen3_27b.sh`, which targets a different Qwen3 MoE/Megatron topology. Set `LOW_VRAM=1` for the tested 24 GB RTX 4090 profile; the profile uses BF16 actor weights, FSDP parameter offload, vLLM eager execution, an 8 GB CPU KV offload budget, short context, LoRA rank 4, and a LoRA-only checkpoint.

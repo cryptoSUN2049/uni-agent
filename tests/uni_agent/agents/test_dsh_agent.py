@@ -80,6 +80,8 @@ def test_config_rejects_traversal_in_artifact_roots() -> None:
         _config(artifact_root="relative")
     with pytest.raises(ValueError, match="traversal"):
         _config(dsh_home_root="/tmp/../unsafe")
+    with pytest.raises(ValueError, match="traversal"):
+        _config(patches=["../unsafe.patch.yml"])
 
 
 def test_prompt_conversion_preserves_user_and_marks_system() -> None:
@@ -123,9 +125,32 @@ def test_run_launches_helper_inside_sandbox_and_returns_trace_correlation() -> N
     assert call["workdir"] == "/testbed"
     assert call["timeout"] == 1800.0
     assert call["env"]["DSH_UA_BASE_URL"] == "http://gateway.example/sessions/abc123/v1"
+    assert json.loads(call["env"]["DSH_UA_PATCHES"]) == []
     assert "api_key" not in result.info
     assert "base_url" not in result.info
     assert any(call["argv"][:2] == ["rm", "-f"] for call in sandbox.exec_calls)
+
+
+def test_run_passes_ordered_profile_patches_to_helper() -> None:
+    output = _helper_result()
+    output["profile"] = "sdk-minimal"
+    output["patches_sha256"] = "sha256:" + "d" * 64
+    sandbox = _FakeSandbox(output=output)
+    result = asyncio.run(
+        DshAgent(
+            _config(
+                profile="sdk-minimal",
+                patches=["examples/dsh/evolution.patch.yml", "/opt/dsh/last.patch.yml"],
+            )
+        ).run(sandbox=sandbox, messages=[{"role": "user", "content": "x"}])
+    )
+    call = next(call for call in sandbox.exec_calls if call["argv"][0:2] == ["python", "-m"])
+    assert json.loads(call["env"]["DSH_UA_PATCHES"]) == [
+        "examples/dsh/evolution.patch.yml",
+        "/opt/dsh/last.patch.yml",
+    ]
+    assert result.info["profile"] == "sdk-minimal"
+    assert result.info["patches_sha256"] == "sha256:" + "d" * 64
 
 
 def test_run_rejects_bad_helper_result_and_cleans_input() -> None:

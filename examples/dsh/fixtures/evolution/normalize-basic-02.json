@@ -1,0 +1,5 @@
+{
+  "schema": "dsh.evolution.fixture.v1",
+  "operation": "normalize_whitespace",
+  "input": "Inspect first.\tDefine once;   run, stop, and undefine."
+}

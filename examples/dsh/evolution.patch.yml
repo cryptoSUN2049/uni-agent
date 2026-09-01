@@ -1,0 +1,10 @@
+# Add the official DSH dynamic-package host and model-facing tools to the
+# standalone sdk-minimal tree. This is an operator-selected startup overlay;
+# it does not install packages or persist model-written source.
+- insert:
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+      config:
+        vmTimeoutMs: 5000
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'

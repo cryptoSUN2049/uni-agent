@@ -52,6 +52,10 @@ class DshAgentConfig(AgentConfig):
     reasoning_effort: str | None = Field(default=None, description="Optional DSH reasoning effort.")
     run_timeout: float = Field(default=1800.0, gt=0, description="Wall-clock cap for the DSH helper process.")
     keep_trace: bool = Field(default=True, description="Persist the canonical DSH event JSONL in the Sandbox.")
+    patches: list[str] = Field(
+        default_factory=list,
+        description="Ordered DSH profile patch files; paths are resolved from the Agent workdir.",
+    )
     runner_args: list[str] = Field(default_factory=list, description="Extra argv appended to the helper invocation.")
 
     @field_validator(
@@ -76,6 +80,16 @@ class DshAgentConfig(AgentConfig):
     def _validate_workdir(cls, value: str) -> str:
         if value != "." and ".." in PurePosixPath(value).parts:
             raise ValueError("DSH adapter default_workdir must not contain traversal")
+        return value
+
+    @field_validator("patches")
+    @classmethod
+    def _validate_patches(cls, value: list[str]) -> list[str]:
+        for patch in value:
+            if not isinstance(patch, str) or not patch.strip():
+                raise ValueError("DSH adapter patches must contain non-empty paths")
+            if ".." in PurePosixPath(patch).parts:
+                raise ValueError("DSH adapter patch paths must not contain traversal")
         return value
 
 
@@ -171,6 +185,14 @@ def _require_result(
     finish_reason = value.get("finish_reason")
     if finish_reason is not None and not isinstance(finish_reason, str):
         raise RuntimeError("dsh adapter helper returned an invalid finish_reason")
+    profile = value.get("profile")
+    if profile is not None and (not isinstance(profile, str) or not profile.strip()):
+        raise RuntimeError("dsh adapter helper returned an invalid profile")
+    patches_sha256 = value.get("patches_sha256")
+    if patches_sha256 is not None and (
+        not isinstance(patches_sha256, str) or _HASH_PATTERN.fullmatch(patches_sha256) is None
+    ):
+        raise RuntimeError("dsh adapter helper returned an invalid patches_sha256")
     return value
 
 
@@ -222,6 +244,7 @@ class DshAgent(Agent):
             "DSH_UA_CWD": effective_workdir,
             "DSH_UA_TRACE_PATH": trace_path,
             "DSH_UA_KEEP_TRACE": "1" if cfg.keep_trace else "0",
+            "DSH_UA_PATCHES": json.dumps(cfg.patches, ensure_ascii=False, separators=(",", ":")),
         }
         if cfg.reasoning_effort is not None:
             env["DSH_UA_REASONING_EFFORT"] = cfg.reasoning_effort
@@ -267,6 +290,8 @@ class DshAgent(Agent):
             "event_count": helper_result["event_count"],
             "finish_reason": finish_reason,
             "keep_trace": cfg.keep_trace,
+            "profile": helper_result.get("profile", cfg.profile),
+            "patches_sha256": helper_result.get("patches_sha256"),
         }
         logger.info(
             "dsh adapter complete: gateway_session=%s events=%s finish_reason=%s",

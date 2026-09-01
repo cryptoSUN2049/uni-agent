@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from uni_agent.agents.dsh import runner
 
 
@@ -61,6 +63,7 @@ def test_runner_persists_canonical_trace_and_passes_gateway_config(monkeypatch, 
         "DSH_UA_TRACE_PATH": str(trace_path),
         "DSH_UA_KEEP_TRACE": "1",
         "DSH_UA_MAX_TOKENS": "4096",
+        "DSH_UA_PATCHES": '["first.patch.yml","second.patch.yml"]',
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -79,9 +82,18 @@ def test_runner_persists_canonical_trace_and_passes_gateway_config(monkeypatch, 
     config = calls["config"]
     assert config.model == "Qwen3-27B"
     assert config.base_url == env["DSH_UA_BASE_URL"]
+    assert config.patches == ("first.patch.yml", "second.patch.yml")
     assert calls["prompt"] == "learn DSH"
     assert calls["session_id"] == "dsh-1"
     assert not input_path.exists()
+
+
+def test_runner_rejects_invalid_patch_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DSH_UA_PATCHES", '["../escape.patch.yml"]')
+    input_path = tmp_path / "input.json"
+    input_path.write_text(json.dumps({"prompt": "x", "session_id": "dsh-1"}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="traversal"):
+        runner.run(input_path, tmp_path / "result.json")
 
 
 def test_runner_rejects_invalid_input_before_starting_harness(monkeypatch, tmp_path: Path) -> None:

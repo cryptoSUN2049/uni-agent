@@ -37,6 +37,8 @@ _INFO_KEYS = (
     "event_count",
     "finish_reason",
     "keep_trace",
+    "profile",
+    "patches_sha256",
 )
 
 
@@ -427,6 +429,10 @@ class DshArchitectureTask(Task):
                 "DSH_VERIFIER_ID": identity["verifier_id"],
                 "DSH_VERIFIER_VERSION": identity["verifier_version"],
                 "DSH_VERIFIER_CODE_DIGEST": identity["verifier_code_digest"],
+                # The verifier resolves release-relative fixtures against the
+                # same cwd used by the DSH helper, keeping both planes on one
+                # workspace without copying fixture bytes into the envelope.
+                "DSH_TASK_WORKDIR": cfg.workdir or getattr(cfg.agent, "default_workdir", "."),
             }
             verification = await sandbox.exec(
                 list(cfg.verifier_command),

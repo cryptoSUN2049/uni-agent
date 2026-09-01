@@ -1,0 +1,5 @@
+{
+  "schema": "dsh.evolution.fixture.v1",
+  "operation": "mask_digits",
+  "input": "Package v2 passed 3 checks before rollback."
+}

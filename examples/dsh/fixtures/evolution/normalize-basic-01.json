@@ -1,0 +1,5 @@
+{
+  "schema": "dsh.evolution.fixture.v1",
+  "operation": "normalize_whitespace",
+  "input": "  Cordis   plugins\nneed a stable   lifecycle.  "
+}
