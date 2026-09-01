@@ -118,6 +118,15 @@ def init_config(args: argparse.Namespace, *, task_configs: list[dict], served_mo
     rollout.load_format = "auto"
     rollout.prompt_length = DEFAULT_PROMPT_LENGTH
     rollout.response_length = response_length
+    # Keep the engine context bounded by the framework batch contract.  The
+    # VERL default (40960) reserves more KV cache than a single 24 GiB GPU can
+    # provide alongside Qwen3-4B, even when the task asks for a short episode.
+    max_model_len = args.max_model_len
+    if max_model_len is None:
+        max_model_len = DEFAULT_PROMPT_LENGTH + response_length
+    if max_model_len < DEFAULT_PROMPT_LENGTH + response_length:
+        raise ValueError("--max-model-len must cover the prompt and response lengths")
+    rollout.max_model_len = max_model_len
     rollout.tensor_model_parallel_size = args.tensor_parallel_size
     rollout.gpu_memory_utilization = args.gpu_memory_utilization
     rollout.calculate_log_probs = True
@@ -345,6 +354,12 @@ def main() -> None:
         "--tensor-parallel-size", "--tp", dest="tensor_parallel_size", type=int, default=4, help="Tensor parallel size."
     )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.9, help="Engine GPU memory fraction.")
+    parser.add_argument(
+        "--max-model-len",
+        type=int,
+        default=(int(os.environ["MAX_MODEL_LEN"]) if os.getenv("MAX_MODEL_LEN") else None),
+        help="Maximum engine context length (default: prompt length + task response budget).",
+    )
     parser.add_argument(
         "--gateway-count",
         type=int,
