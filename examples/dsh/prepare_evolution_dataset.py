@@ -54,11 +54,11 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
     """Render a bounded task instruction without revealing the reference output."""
     operation_bodies = {
         "normalize_whitespace": (
-            "return args.text.replaceAll(String.fromCharCode(10), ' ').replaceAll(String.fromCharCode(9), ' ')"
+            "a.text.replaceAll(String.fromCharCode(10), ' ').replaceAll(String.fromCharCode(9), ' ')"
             ".trim().split(' ').filter(Boolean).join(' ')"
         ),
-        "redact_email": ("return args.text.replace(new RegExp(\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\", 'g'), '<EMAIL>')"),
-        "mask_digits": "return args.text.replace(/[0-9]/g, '#')",
+        "redact_email": ("a.text.replace(new RegExp(\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\", 'g'), '<EMAIL>')"),
+        "mask_digits": "a.text.replace(/[0-9]/g, '#')",
     }
     operation_body = operation_bodies[operation]
     return [
@@ -77,12 +77,11 @@ def _prompt(*, fixture_path: str, candidate_tool_name: str, operation: str) -> l
                 "3–6 letter idPrefix, `inject: ['tools']`, and a tool named "
                 f"`{candidate_tool_name}`. This is a host-only package: the `code` object must contain only a "
                 "`host` key; omit `client` entirely (do not send `client:''`). Set `code.host` by copying this "
-                "complete JavaScript expression exactly, "
-                "replacing only `TOOL`, the description, and `BODY`: `return { inject: ['tools'], apply(ctx) { "
-                "harness.registerTool(ctx, harness.defineTool({ name: 'TOOL', description: 'bounded transform', "
-                "parameters: { text: { type: 'string', required: true } }, output: { schema: { type: 'string' }, "
-                "render(_args, value) { return [{ type: 'text', text: value }] } }, async execute(args) { BODY } })); "
-                "} };`. Replace `BODY` with exactly this execute body for "
+                "compact JavaScript expression exactly, replacing only `TOOL` and `BODY`: "
+                "`return{inject:['tools'],apply(ctx){harness.registerTool(ctx,harness.defineTool({name:'TOOL',"
+                "description:'transform',parameters:{text:{type:'string',required:true}},output:{schema:{type:'string'},"
+                "render:(_a,v)=>[{type:'text',text:v}]},async execute(a){return BODY}}))}}`; Replace `BODY` with "
+                "exactly this expression for "
                 f"`{operation}`: `{operation_body}`. The candidate "
                 "must return only the transformed string. Never access process, require, "
                 "filesystem writes, shell, credentials, or network APIs from the candidate. Run the Package with "
