@@ -4,7 +4,7 @@ This directory is the smallest runnable S0 surface for the official DSH path. Th
 
 The included `verifier.py` is a deterministic smoke fixture. It checks exact trace and envelope hashes and awards one only when `metadata.expected_response_sha256` matches the response. Replace it with a benchmark-specific verifier before any training release; never use a non-fresh or actor-supplied score as online reward.
 
-The first training proof uses the official dense `Qwen/Qwen3-4B` checkpoint as the 3B-class target. The public Qwen release does not provide a `Qwen/Qwen3-3B` repository; set `MODEL_ID` and `MODEL_PATH` to a compatible private or mirrored 3B checkpoint when one is available. The model-size choice is an integration gate, not a claim that the policy already understands DSH or can perform self-evolution. The launcher fails closed on a missing DSH runtime, an unacknowledged reward POST, or any failed rollout session.
+The first training proof uses the official dense `Qwen/Qwen3-4B` checkpoint as the 3B-class target. The public Qwen release does not provide a `Qwen/Qwen3-3B` repository; set `MODEL_ID` and `MODEL_PATH` to a compatible private or mirrored 3B checkpoint when one is available. The model-size choice is an integration gate, not a claim that the policy already understands DSH or can perform self-evolution. The launcher fails closed on a missing DSH runtime, an unacknowledged reward POST, any failed rollout session, or missing/false episode-completion metadata.
 
 ## Human-operated, restart-safe runbook
 

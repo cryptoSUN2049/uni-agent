@@ -127,6 +127,7 @@ if [[ "${PRINT_COMMAND:-0}" == "1" ]]; then
     "++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.report_reward=True"
     "++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.require_reward_post=True"
     "++actor_rollout_ref.rollout.custom.agent_framework.fail_on_rollout_error=True"
+    "++actor_rollout_ref.rollout.custom.agent_framework.require_finished_episode=True"
     "trainer.save_freq=${SAVE_FREQ}"
     "trainer.total_training_steps=${TOTAL_TRAINING_STEPS}"
     "trainer.resume_mode=${RESUME_MODE}"
@@ -267,6 +268,7 @@ COMMAND=(
   ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=False
   ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=True
   ++actor_rollout_ref.rollout.custom.agent_framework.fail_on_rollout_error=True
+  ++actor_rollout_ref.rollout.custom.agent_framework.require_finished_episode=True
   trainer.logger="['console','file']"
   trainer.project_name="${PROJECT_NAME}"
   trainer.experiment_name="${EXP_NAME}"

@@ -115,6 +115,7 @@ async def _build_framework_with_agent_runners(
     log_dir: str | None = None,
     mask_unfinished_episode: bool = False,
     fail_on_rollout_error: bool = False,
+    require_finished_episode: bool = False,
     trajectory_postprocessor_fqn: str | None = None,
     trajectory_postprocessor_kwargs: object | None = None,
 ):
@@ -124,6 +125,7 @@ async def _build_framework_with_agent_runners(
         "agent_runners": agent_runners,
         "mask_unfinished_episode": mask_unfinished_episode,
         "fail_on_rollout_error": fail_on_rollout_error,
+        "require_finished_episode": require_finished_episode,
     }
     if log_dir is not None:
         agent_framework_cfg["log_dir"] = log_dir
@@ -827,6 +829,16 @@ async def test_framework_rejects_non_boolean_masking_config():
         )
 
 
+@pytest.mark.asyncio
+async def test_framework_rejects_non_boolean_finished_episode_config():
+    with pytest.raises(ValueError, match="require_finished_episode must be a bool"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            require_finished_episode="true",  # type: ignore[arg-type]
+        )
+
+
 def test_align_routed_experts_preserves_backend_dtype():
     aligned = _align_routed_experts(np.array([[[256, 511]]], dtype=np.uint16), seq_len=2)
 
@@ -1113,8 +1125,8 @@ async def test_generate_sequences_can_fail_closed_on_any_rollout_error(fake_tq):
 async def test_strict_success_group_is_written_as_one_tq_batch(fake_tq):
     runtime = _FakeGatewayManager(
         {
-            "session-sample-0-rollout-0": [_trajectory()],
-            "session-sample-0-rollout-1": [_trajectory()],
+            "session-sample-0-rollout-0": [_trajectory(reward_info={"reward": 1.0, "finished": True})],
+            "session-sample-0-rollout-1": [_trajectory(reward_info={"reward": 0.25, "finished": True})],
         }
     )
     framework = await _build_framework_with_agent_runners(
@@ -1123,12 +1135,52 @@ async def test_strict_success_group_is_written_as_one_tq_batch(fake_tq):
         n=2,
         val_n=2,
         fail_on_rollout_error=True,
+        require_finished_episode=True,
     )
 
     await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
 
     assert [*fake_tq.batch_puts[0]["keys"]] == ["uid-0_0_0", "uid-0_1_0"]
     assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "finished"}}]
+
+
+@pytest.mark.parametrize(
+    "unfinished_reward_info",
+    [{"reward": 0.25, "finished": False}, {"reward": 0.25}],
+    ids=["false", "missing"],
+)
+@pytest.mark.asyncio
+async def test_strict_group_rejects_all_siblings_when_one_episode_is_unfinished(fake_tq, unfinished_reward_info):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [_trajectory(reward_info={"reward": 1.0, "finished": True})],
+            "session-sample-0-rollout-1": [_trajectory(reward_info=unfinished_reward_info)],
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        n=2,
+        val_n=2,
+        fail_on_rollout_error=True,
+        require_finished_episode=True,
+    )
+
+    with pytest.raises(RuntimeError, match="rollout failure"):
+        await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    assert fake_tq.batch_puts == []
+    assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "failure"}}]
+
+
+@pytest.mark.asyncio
+async def test_require_finished_episode_requires_strict_group_submission():
+    with pytest.raises(ValueError, match="require_finished_episode requires fail_on_rollout_error"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            require_finished_episode=True,
+        )
 
 
 @pytest.mark.asyncio

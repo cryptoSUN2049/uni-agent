@@ -322,6 +322,7 @@ class GatewayAgentFramework(AgentFramework):
         log_dir: str | None = None,
         mask_unfinished_episode: bool = False,
         fail_on_rollout_error: bool = False,
+        require_finished_episode: bool = False,
         trajectory_postprocessor: TrajectoryPostprocessor | None = None,
         trajectory_postprocessor_kwargs: dict[str, object] | None = None,
     ):
@@ -342,6 +343,7 @@ class GatewayAgentFramework(AgentFramework):
         self._log_dir = log_dir
         self._mask_unfinished_episode = mask_unfinished_episode
         self._fail_on_rollout_error = fail_on_rollout_error
+        self._require_finished_episode = require_finished_episode
         self._trajectory_postprocessor = trajectory_postprocessor
         self._trajectory_postprocessor_kwargs = trajectory_postprocessor_kwargs or {}
 
@@ -381,6 +383,12 @@ class GatewayAgentFramework(AgentFramework):
         if type(fail_on_rollout_error) is not bool:
             raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.fail_on_rollout_error must be a bool")
 
+        require_finished_episode = af_cfg.get("require_finished_episode", False)
+        if type(require_finished_episode) is not bool:
+            raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.require_finished_episode must be a bool")
+        if require_finished_episode and not fail_on_rollout_error:
+            raise ValueError("require_finished_episode requires fail_on_rollout_error")
+
         postprocessor_fqn = af_cfg.get("trajectory_postprocessor_fqn")
         postprocessor_kwargs = af_cfg.get("trajectory_postprocessor_kwargs")
         if postprocessor_kwargs is None:
@@ -416,6 +424,7 @@ class GatewayAgentFramework(AgentFramework):
             log_dir=log_dir,
             mask_unfinished_episode=mask_unfinished_episode,
             fail_on_rollout_error=fail_on_rollout_error,
+            require_finished_episode=require_finished_episode,
             trajectory_postprocessor=trajectory_postprocessor,
             trajectory_postprocessor_kwargs=trajectory_postprocessor_kwargs,
         )
@@ -628,6 +637,21 @@ class GatewayAgentFramework(AgentFramework):
 
             successful_outcomes.append((session_index, trajectories, session_sample_fields))
 
+        strict_unfinished_episodes = (
+            sum(
+                any(trajectory.reward_info.get("finished") is not True for trajectory in trajectories)
+                for _, trajectories, _ in successful_outcomes
+            )
+            if self._require_finished_episode
+            else sum(
+                any(trajectory.reward_info.get("finished") is False for trajectory in trajectories)
+                for _, trajectories, _ in successful_outcomes
+            )
+        )
+        if self._require_finished_episode and strict_unfinished_episodes:
+            failed_sessions += strict_unfinished_episodes
+            failure_reasons.append(f"{strict_unfinished_episodes} unfinished episode(s) for uid={uid}")
+
         if self._fail_on_rollout_error and failed_sessions:
             logger.warning(
                 "strict rollout group rejected for uid=%s: %s/%s session(s) failed; no trajectories will be written",
@@ -640,7 +664,7 @@ class GatewayAgentFramework(AgentFramework):
                 "num_success_sessions": 0,
                 "num_failed_sessions": failed_sessions,
                 "num_success_outputs": 0,
-                "num_unfinished_episodes": 0,
+                "num_unfinished_episodes": strict_unfinished_episodes,
                 "num_failed_uids": 1,
                 "failure_reasons": failure_reasons,
             }
@@ -676,10 +700,7 @@ class GatewayAgentFramework(AgentFramework):
 
             success_sessions = len(successful_outcomes)
             success_outputs = sum(len(trajectories) for _, trajectories, _ in successful_outcomes)
-            unfinished_episodes = sum(
-                any(trajectory.reward_info.get("finished") is False for trajectory in trajectories)
-                for _, trajectories, _ in successful_outcomes
-            )
+            unfinished_episodes = strict_unfinished_episodes
         else:
             # Preserve the permissive path's per-session writes for backwards
             # compatibility: one bad sibling does not discard good episodes.

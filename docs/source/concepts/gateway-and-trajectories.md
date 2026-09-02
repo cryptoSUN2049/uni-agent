@@ -204,6 +204,12 @@ The trainer's ReplayBuffer consumes completed records independently of rollout t
 - A batch raises only when every rollout fails.
 - Reward reporting is best-effort and logs failures.
 
+These are the permissive defaults. With `fail_on_rollout_error=true`, the
+Framework buffers every sibling for a prompt and submits the group only when
+all sessions succeed. With `require_finished_episode=true`, strict submission
+also rejects the full group when any trajectory reports `finished=false` or
+omits completion metadata.
+
 This isolation is important for long-horizon workloads, where session latency and failure modes vary widely.
 
 ## Configuration
@@ -220,6 +226,12 @@ Important knobs include:
 - `mask_unfinished_episode`: zeroes training masks for sessions that report
   `finished=false`. Sessions without completion metadata remain trainable.
   Defaults to `false`.
+- `fail_on_rollout_error`: submits all sibling trajectories for a prompt as one
+  TransferQueue batch and rejects the full group when any session fails.
+  Defaults to `false`.
+- `require_finished_episode`: rejects a strict group unless every trajectory
+  reports `finished=true`. Requires `fail_on_rollout_error=true` and defaults
+  to `false`.
 - `enable_last_assistant_rollback`: reuses a chain when only its latest Assistant
   message is rewritten. Defaults to `true`; set it to `false` to preserve the
   previous split-on-rewrite behavior.
