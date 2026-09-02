@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+RUN_STATUSES = ("prepared", "running", "completed", "failed", "interrupted", "torn_down")
+TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted", "torn_down"})
+
 
 def _sha256(path: Path) -> str | None:
     if not path.is_file():
@@ -45,9 +48,11 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", type=Path, required=True)
-    parser.add_argument("--status", required=True)
+    parser.add_argument("--status", choices=RUN_STATUSES, required=True)
     parser.add_argument("--pid", type=int, default=None)
+    parser.add_argument("--worker-pid", type=int, default=None)
     parser.add_argument("--exit-code", type=int, default=None)
+    parser.add_argument("--termination-signal")
     parser.add_argument("--command-file", type=Path)
     parser.add_argument("--model-path", type=Path)
     parser.add_argument("--model-id")
@@ -66,18 +71,32 @@ def main() -> None:
     args.run_root.mkdir(parents=True, exist_ok=True)
     manifest_path = args.run_root / "run-manifest.json"
     manifest = _read_json(manifest_path) or {"schema": "dsh.online-rl.run-manifest.v1"}
+    updated_at = datetime.now(timezone.utc).isoformat()
     manifest.update(
         {
             "schema": "dsh.online-rl.run-manifest.v1",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": updated_at,
             "status": args.status,
             "run_root": str(args.run_root),
         }
     )
+    if args.status == "prepared":
+        for key in ("pid", "worker_pid", "started_at", "finished_at", "exit_code", "termination_signal"):
+            manifest.pop(key, None)
+    elif args.status == "running":
+        manifest.setdefault("started_at", updated_at)
+        for key in ("finished_at", "exit_code", "termination_signal"):
+            manifest.pop(key, None)
+    elif args.status in TERMINAL_STATUSES:
+        manifest.setdefault("finished_at", updated_at)
     if args.pid is not None:
         manifest["pid"] = args.pid
+    if args.worker_pid is not None:
+        manifest["worker_pid"] = args.worker_pid
     if args.exit_code is not None:
         manifest["exit_code"] = args.exit_code
+    if args.termination_signal:
+        manifest["termination_signal"] = args.termination_signal
     if args.command_file:
         manifest["command_file"] = str(args.command_file)
         if args.command_file.is_file():

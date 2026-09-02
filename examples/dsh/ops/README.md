@@ -33,8 +33,10 @@ examples/dsh/ops/launch_qwen3_4b_online_rl.sh
 默认配置是 Qwen3-4B、Hermes parser、4 个 rollout/group、16 个 train row、8
 个 holdout row 和 4 个 optimizer step。默认以 `nohup` 脱离 SSH；要在当前终端
 查看退出码可加 `--foreground`。启动器会拒绝覆盖已有 run root，并把完整无密钥
-命令写入 `command.txt`，把 PID、代码 revision、数据 digest 写入
-`run-manifest.json`。
+命令写入 `command.txt`，把 supervisor/worker PID、代码 revision、数据 digest
+写入 `run-manifest.json`。supervisor 会等待训练进程，最终记录 `completed`、
+`failed` 或 `interrupted`、退出码和结束时间；后台子进程退出后 manifest 不会继续
+误报 `running`。
 
 ## 重启、查看、reload
 

@@ -18,9 +18,21 @@ import sys
 from pathlib import Path
 
 value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for key in ("status", "pid", "exit_code", "model_id", "uni_agent_sha", "verl_sha", "dsh_sha"):
+for key in (
+    "status",
+    "pid",
+    "worker_pid",
+    "exit_code",
+    "termination_signal",
+    "model_id",
+    "uni_agent_sha",
+    "verl_sha",
+    "dsh_sha",
+):
     if key in value:
         print(f"{key}={value[key]}")
+print(f"started_at={value.get('started_at', '')}")
+print(f"finished_at={value.get('finished_at', '')}")
 print(f"manifest_updated_at={value.get('updated_at', '')}")
 print(f"dataset={value.get('dataset', {})}")
 PY

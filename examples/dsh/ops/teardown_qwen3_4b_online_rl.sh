@@ -25,7 +25,9 @@ if [[ ! -r "/proc/${PID}/cmdline" ]]; then
   echo "pid=${PID} is not running"
 else
   CMDLINE="$(tr '\0' ' ' < "/proc/${PID}/cmdline")"
-  if [[ "${CMDLINE}" != *"train_qwen3_4b_online_rl.sh"* && "${CMDLINE}" != *"parallel_infer_verl.py"* ]]; then
+  if [[ "${CMDLINE}" != *"train_qwen3_4b_online_rl.sh"* \
+    && "${CMDLINE}" != *"supervise_qwen3_4b_online_rl.sh"* \
+    && "${CMDLINE}" != *"parallel_infer_verl.py"* ]]; then
     echo "refusing to stop pid=${PID}: command is not a known DSH run" >&2
     echo "${CMDLINE}" >&2
     exit 2

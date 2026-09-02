@@ -87,6 +87,11 @@ export ACTOR_OPTIMIZER_OFFLOAD="${ACTOR_OPTIMIZER_OFFLOAD:-True}"
 export RESUME_MODE="${RESUME_MODE:-disable}"
 export RESUME_FROM_PATH="${RESUME_FROM_PATH:-}"
 export VAL_ONLY="${VAL_ONLY:-False}"
+LAUNCH_READY_TIMEOUT_SECONDS="${LAUNCH_READY_TIMEOUT_SECONDS:-10}"
+if ! [[ "${LAUNCH_READY_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "LAUNCH_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 2
+fi
 export PYTHON_BIN
 
 LAUNCHER="${DSH_REPO_ROOT}/examples/dsh/train_qwen3_4b_online_rl.sh"
@@ -154,8 +159,27 @@ if [[ "${MODE}" == "foreground" ]]; then
   exit "$code"
 fi
 
-nohup "${run_command[@]}" > "${RUN_ROOT}/run.log" 2>&1 &
+SUPERVISOR="${SCRIPT_DIR}/supervise_qwen3_4b_online_rl.sh"
+dsh_require_file "${SUPERVISOR}"
+nohup /bin/bash "${SUPERVISOR}" "${RUN_ROOT}" "${PYTHON_BIN}" \
+  "${run_command[@]}" > "${RUN_ROOT}/run.log" 2>&1 &
 pid=$!
-printf '%s\n' "$pid" > "${RUN_ROOT}/pid"
-dsh_write_manifest "${RUN_ROOT}" --status running --pid "$pid" "${MANIFEST_ARGS[@]}"
+deadline=$((SECONDS + LAUNCH_READY_TIMEOUT_SECONDS))
+while [[ "$(tr -d '[:space:]' < "${RUN_ROOT}/supervisor-ready" 2>/dev/null || true)" != "${pid}" ]]; do
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    set +e
+    wait "${pid}"
+    code=$?
+    set -e
+    echo "detached supervisor exited before becoming ready (exit=${code}); inspect ${RUN_ROOT}/run.log" >&2
+    exit 1
+  fi
+  if (( SECONDS >= deadline )); then
+    kill -TERM "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+    echo "detached supervisor did not become ready within ${LAUNCH_READY_TIMEOUT_SECONDS}s" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
 printf 'started pid=%s\nrun_root=%s\n' "$pid" "${RUN_ROOT}"
