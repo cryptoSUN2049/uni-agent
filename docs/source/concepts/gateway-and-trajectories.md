@@ -158,6 +158,7 @@ The built-in Task Runner posts:
 {
   "reward_info": {
     "reward": 1.0,
+    "verifier_reward": 1.0,
     "acc": 1.0,
     "finished": true
   }
@@ -165,6 +166,8 @@ The built-in Task Runner posts:
 ```
 
 The Agent Framework reads the session reward, applies it to finalized trajectories, and writes a sparse token-level `rm_scores` tensor with the reward on the final token.
+
+Verifier-backed tasks set the framework-owned `verifier_reward` field. The Framework copies it into `reward_extra_info` only after checking that it is finite and exactly equals the optimization reward; a task's additive metadata cannot claim this reserved name. A strict recipe can enable `require_verifier_reward` so missing or mismatched projections fail the complete rollout group before sampling.
 
 Agent completion is factual session metadata; the Framework, not the Task, decides how training consumes it. When the training configuration enables `mask_unfinished_episode`, a session with `finished=false` is still written and tagged as successful, but its TransferQueue `response_mask` and `loss_mask` are all zero so it does not contribute policy gradients, loss-normalization counts, or auxiliary losses.
 
@@ -234,6 +237,9 @@ Important knobs include:
 - `require_finished_episode`: rejects a strict group unless every trajectory
   reports `finished=true`. Requires `fail_on_rollout_error=true` and defaults
   to `false`.
+- `require_verifier_reward`: requires a finite framework-owned
+  `verifier_reward` equal to the optimization reward. Requires
+  `fail_on_rollout_error=true` and defaults to `false`.
 - `enable_last_assistant_rollback`: reuses a chain when only its latest Assistant
   message is rewritten. Defaults to `true`; set it to `false` to preserve the
   previous split-on-rewrite behavior.

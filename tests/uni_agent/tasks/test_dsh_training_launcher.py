@@ -39,6 +39,7 @@ def test_qwen3_4b_launcher_prints_strict_online_rl_contract():
         "runner_kwargs.require_reward_post=True",
         "fail_on_rollout_error=True",
         "require_finished_episode=True",
+        "require_verifier_reward=True",
         "trainer.save_freq=1",
         "trainer.total_training_steps=1",
         "data.train_max_samples=1",

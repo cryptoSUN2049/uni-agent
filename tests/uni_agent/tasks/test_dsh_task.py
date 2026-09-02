@@ -124,6 +124,7 @@ def test_task_writes_minimal_envelope_and_returns_verifier_reward() -> None:
     result = asyncio.run(_HarnessTask(_config(), sandbox, _FakeAgent()).run())
 
     assert result.reward == 0.75
+    assert result.verifier_reward == 0.75
     assert result.accuracy == 0.5
     assert result.finished is True
     assert result.extra_info["verifier"]["extra_info"] == {"rubric": "all"}

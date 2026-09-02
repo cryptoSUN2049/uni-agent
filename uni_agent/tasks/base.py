@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -25,6 +26,8 @@ from uni_agent.sandbox import SandboxConfig
 if TYPE_CHECKING:
     from uni_agent.agents import Agent
     from uni_agent.sandbox import Sandbox
+
+_RESERVED_REWARD_INFO_KEYS = frozenset({"reward", "acc", "finished", "verifier_reward"})
 
 
 class TaskConfig(BaseModel):
@@ -99,7 +102,9 @@ class TaskResult:
     that a runner may post alongside the scalar reward (for example the hash of
     a fresh DSH verifier receipt). Keeping the two fields separate prevents a
     task's potentially large logs or model output from crossing the Gateway
-    boundary accidentally.
+    boundary accidentally. ``verifier_reward`` is framework-owned: trusted task
+    code sets it from the verifier result, and additive ``reward_info`` metadata
+    cannot claim the same name.
     """
 
     reward: Any
@@ -107,6 +112,7 @@ class TaskResult:
     finished: bool | None = None
     extra_info: dict[str, Any] | None = None
     reward_info: dict[str, Any] | None = None
+    verifier_reward: float | None = None
 
 
 def build_reward_info(result: TaskResult) -> dict[str, Any]:
@@ -120,6 +126,20 @@ def build_reward_info(result: TaskResult) -> dict[str, Any]:
     if result.finished is not None and type(result.finished) is not bool:
         raise ValueError("TaskResult.finished must be a bool or None")
     payload: dict[str, Any] = {"reward": result.reward}
+    if result.verifier_reward is not None:
+        if isinstance(result.verifier_reward, bool) or not isinstance(result.verifier_reward, int | float):
+            raise ValueError("TaskResult.verifier_reward must be a finite number or None")
+        verifier_reward = float(result.verifier_reward)
+        if not math.isfinite(verifier_reward):
+            raise ValueError("TaskResult.verifier_reward must be a finite number or None")
+        if isinstance(result.reward, bool) or not isinstance(result.reward, int | float):
+            raise ValueError("TaskResult.reward must be numeric when verifier_reward is set")
+        reward = float(result.reward)
+        if not math.isfinite(reward):
+            raise ValueError("TaskResult.reward must be finite when verifier_reward is set")
+        if verifier_reward != reward:
+            raise ValueError("TaskResult.verifier_reward must equal TaskResult.reward")
+        payload["verifier_reward"] = verifier_reward
     if result.accuracy is not None:
         payload["acc"] = result.accuracy
     if result.finished is not None:
@@ -127,7 +147,7 @@ def build_reward_info(result: TaskResult) -> dict[str, Any]:
     if result.reward_info is not None:
         if not isinstance(result.reward_info, dict):
             raise ValueError("TaskResult.reward_info must be an object or None")
-        reserved = sorted(set(result.reward_info).intersection(payload))
+        reserved = sorted(set(result.reward_info).intersection(_RESERVED_REWARD_INFO_KEYS))
         if reserved:
             raise ValueError(f"TaskResult.reward_info cannot overwrite framework fields: {reserved}")
         payload.update(result.reward_info)

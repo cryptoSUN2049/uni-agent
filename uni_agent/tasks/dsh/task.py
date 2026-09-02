@@ -361,6 +361,7 @@ def _task_result(
     }
     return TaskResult(
         reward=reward,
+        verifier_reward=reward,
         accuracy=accuracy,
         finished=raw_finished,
         extra_info={

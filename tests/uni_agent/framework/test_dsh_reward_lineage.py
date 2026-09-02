@@ -7,6 +7,7 @@ from uni_agent.tasks.base import build_reward_info
 def test_task_reward_info_preserves_dsh_lineage_for_gateway_trajectory() -> None:
     result = TaskResult(
         reward=0.75,
+        verifier_reward=0.75,
         accuracy=0.5,
         finished=True,
         reward_info={
@@ -20,6 +21,7 @@ def test_task_reward_info_preserves_dsh_lineage_for_gateway_trajectory() -> None
 
     assert build_reward_info(result) == {
         "reward": 0.75,
+        "verifier_reward": 0.75,
         "acc": 0.5,
         "finished": True,
         "dsh": {
@@ -35,3 +37,9 @@ def test_task_reward_info_rejects_reserved_or_nonfinite_metadata() -> None:
         build_reward_info(TaskResult(reward=1.0, reward_info={"reward": 2.0}))
     with pytest.raises(ValueError, match="strict-JSON"):
         build_reward_info(TaskResult(reward=float("nan")))
+    with pytest.raises(ValueError, match="cannot overwrite"):
+        build_reward_info(TaskResult(reward=1.0, reward_info={"verifier_reward": 1.0}))
+    with pytest.raises(ValueError, match="finite number"):
+        build_reward_info(TaskResult(reward=1.0, verifier_reward=float("nan")))
+    with pytest.raises(ValueError, match="must equal"):
+        build_reward_info(TaskResult(reward=1.0, verifier_reward=0.5))

@@ -116,6 +116,7 @@ async def _build_framework_with_agent_runners(
     mask_unfinished_episode: bool = False,
     fail_on_rollout_error: bool = False,
     require_finished_episode: bool = False,
+    require_verifier_reward: bool = False,
     trajectory_postprocessor_fqn: str | None = None,
     trajectory_postprocessor_kwargs: object | None = None,
 ):
@@ -126,6 +127,7 @@ async def _build_framework_with_agent_runners(
         "mask_unfinished_episode": mask_unfinished_episode,
         "fail_on_rollout_error": fail_on_rollout_error,
         "require_finished_episode": require_finished_episode,
+        "require_verifier_reward": require_verifier_reward,
     }
     if log_dir is not None:
         agent_framework_cfg["log_dir"] = log_dir
@@ -839,6 +841,16 @@ async def test_framework_rejects_non_boolean_finished_episode_config():
         )
 
 
+@pytest.mark.asyncio
+async def test_framework_rejects_non_boolean_verifier_reward_config():
+    with pytest.raises(ValueError, match="require_verifier_reward must be a bool"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            require_verifier_reward="true",  # type: ignore[arg-type]
+        )
+
+
 def test_align_routed_experts_preserves_backend_dtype():
     aligned = _align_routed_experts(np.array([[[256, 511]]], dtype=np.uint16), seq_len=2)
 
@@ -1125,8 +1137,12 @@ async def test_generate_sequences_can_fail_closed_on_any_rollout_error(fake_tq):
 async def test_strict_success_group_is_written_as_one_tq_batch(fake_tq):
     runtime = _FakeGatewayManager(
         {
-            "session-sample-0-rollout-0": [_trajectory(reward_info={"reward": 1.0, "finished": True})],
-            "session-sample-0-rollout-1": [_trajectory(reward_info={"reward": 0.25, "finished": True})],
+            "session-sample-0-rollout-0": [
+                _trajectory(reward_info={"reward": 1.0, "verifier_reward": 1.0, "finished": True})
+            ],
+            "session-sample-0-rollout-1": [
+                _trajectory(reward_info={"reward": 0.25, "verifier_reward": 0.25, "finished": True})
+            ],
         }
     )
     framework = await _build_framework_with_agent_runners(
@@ -1136,11 +1152,16 @@ async def test_strict_success_group_is_written_as_one_tq_batch(fake_tq):
         val_n=2,
         fail_on_rollout_error=True,
         require_finished_episode=True,
+        require_verifier_reward=True,
     )
 
     await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
 
     assert [*fake_tq.batch_puts[0]["keys"]] == ["uid-0_0_0", "uid-0_1_0"]
+    assert tu.get(fake_tq.batch_puts[0]["fields"], "reward_extra_info") == [
+        {"verifier_reward": 1.0},
+        {"verifier_reward": 0.25},
+    ]
     assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "finished"}}]
 
 
@@ -1181,6 +1202,44 @@ async def test_require_finished_episode_requires_strict_group_submission():
             gateway_manager=_FakeGatewayManager({}),
             require_finished_episode=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_require_verifier_reward_requires_strict_group_submission():
+    with pytest.raises(ValueError, match="require_verifier_reward requires fail_on_rollout_error"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            require_verifier_reward=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("reward_info", "message"),
+    [
+        ({"reward": 1.0, "finished": True}, "requires verifier_reward"),
+        (
+            {"reward": 1.0, "verifier_reward": float("nan"), "finished": True},
+            "verifier_reward must be a finite number",
+        ),
+        (
+            {"reward": 1.0, "verifier_reward": 0.5, "finished": True},
+            "verifier_reward must equal reward",
+        ),
+    ],
+    ids=["missing", "nonfinite", "mismatched"],
+)
+@pytest.mark.asyncio
+async def test_required_verifier_reward_rejects_invalid_projection(reward_info, message):
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=_FakeGatewayManager({}),
+        fail_on_rollout_error=True,
+        require_verifier_reward=True,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        framework._score_from_reward_info([_trajectory(reward_info=reward_info)])
 
 
 @pytest.mark.asyncio

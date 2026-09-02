@@ -1,6 +1,6 @@
 # Official DSH → Uni-Agent → VERL adapter
 
-This directory is the smallest runnable S0 surface for the official DSH path. The `dsh` Agent launches the DSH Python SDK inside the same Uni-Agent Sandbox; the SDK sends model requests to the session-scoped Gateway, while `dsh_architecture` invokes a trusted verifier against the resulting trace and task envelope. `run_task(..., report_reward=True)` posts the scalar reward and a compact DSH receipt reference back to the Gateway, so VERL can keep the token trajectory and semantic lineage together.
+This directory is the smallest runnable S0 surface for the official DSH path. The `dsh` Agent launches the DSH Python SDK inside the same Uni-Agent Sandbox; the SDK sends model requests to the session-scoped Gateway, while `dsh_architecture` invokes a trusted verifier against the resulting trace and task envelope. `run_task(..., report_reward=True)` posts the scalar reward, the equal framework-owned `verifier_reward`, and a compact DSH receipt reference back to the Gateway, so VERL can keep the token trajectory and semantic lineage together.
 
 The included `verifier.py` is a deterministic smoke fixture. It checks exact trace and envelope hashes and awards one only when `metadata.expected_response_sha256` matches the response. Replace it with a benchmark-specific verifier before any training release; never use a non-fresh or actor-supplied score as online reward.
 

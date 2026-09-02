@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import logging
+import math
 import os
 import random
 from collections.abc import Awaitable, Callable
@@ -323,6 +324,7 @@ class GatewayAgentFramework(AgentFramework):
         mask_unfinished_episode: bool = False,
         fail_on_rollout_error: bool = False,
         require_finished_episode: bool = False,
+        require_verifier_reward: bool = False,
         trajectory_postprocessor: TrajectoryPostprocessor | None = None,
         trajectory_postprocessor_kwargs: dict[str, object] | None = None,
     ):
@@ -344,6 +346,7 @@ class GatewayAgentFramework(AgentFramework):
         self._mask_unfinished_episode = mask_unfinished_episode
         self._fail_on_rollout_error = fail_on_rollout_error
         self._require_finished_episode = require_finished_episode
+        self._require_verifier_reward = require_verifier_reward
         self._trajectory_postprocessor = trajectory_postprocessor
         self._trajectory_postprocessor_kwargs = trajectory_postprocessor_kwargs or {}
 
@@ -389,6 +392,12 @@ class GatewayAgentFramework(AgentFramework):
         if require_finished_episode and not fail_on_rollout_error:
             raise ValueError("require_finished_episode requires fail_on_rollout_error")
 
+        require_verifier_reward = af_cfg.get("require_verifier_reward", False)
+        if type(require_verifier_reward) is not bool:
+            raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.require_verifier_reward must be a bool")
+        if require_verifier_reward and not fail_on_rollout_error:
+            raise ValueError("require_verifier_reward requires fail_on_rollout_error")
+
         postprocessor_fqn = af_cfg.get("trajectory_postprocessor_fqn")
         postprocessor_kwargs = af_cfg.get("trajectory_postprocessor_kwargs")
         if postprocessor_kwargs is None:
@@ -425,6 +434,7 @@ class GatewayAgentFramework(AgentFramework):
             mask_unfinished_episode=mask_unfinished_episode,
             fail_on_rollout_error=fail_on_rollout_error,
             require_finished_episode=require_finished_episode,
+            require_verifier_reward=require_verifier_reward,
             trajectory_postprocessor=trajectory_postprocessor,
             trajectory_postprocessor_kwargs=trajectory_postprocessor_kwargs,
         )
@@ -1074,15 +1084,36 @@ class GatewayAgentFramework(AgentFramework):
         reward_score = the posted ``reward``; anything else posted (e.g. ``acc``)
         rides along as reward_extra_info. ``finished`` is dropped instead: the
         framework consumes it directly as a completion fact, so it is not a reward
-        metric. See ``task_runner._post_reward_info`` for what's posted.
+        metric. A present ``verifier_reward`` must be finite and equal to the
+        optimization reward. See ``task_runner._post_reward_info`` for what's posted.
         """
         reward_info = dict(session_trajectories[-1].reward_info or {})
         reward = reward_info.pop("reward", None)
         reward_info.pop("finished", None)
         if reward is None:
+            if self._require_verifier_reward:
+                raise ValueError("require_verifier_reward requires a posted reward")
             return None
+        if isinstance(reward, bool) or not isinstance(reward, int | float):
+            raise ValueError("reward_info.reward must be a finite number")
+        score = float(reward)
+        if not math.isfinite(score):
+            raise ValueError("reward_info.reward must be a finite number")
+        verifier_reward = reward_info.get("verifier_reward")
+        if verifier_reward is None:
+            if self._require_verifier_reward:
+                raise ValueError("require_verifier_reward requires verifier_reward")
+        else:
+            if isinstance(verifier_reward, bool) or not isinstance(verifier_reward, int | float):
+                raise ValueError("reward_info.verifier_reward must be a finite number")
+            verifier_score = float(verifier_reward)
+            if not math.isfinite(verifier_score):
+                raise ValueError("reward_info.verifier_reward must be a finite number")
+            if verifier_score != score:
+                raise ValueError("reward_info.verifier_reward must equal reward")
+            reward_info["verifier_reward"] = verifier_score
         # Each trajectory needs its own dict: downstream code merges into it.
-        return [(float(reward), dict(reward_info)) for _ in session_trajectories]
+        return [(score, dict(reward_info)) for _ in session_trajectories]
 
     async def _score_trajectories(
         self,
