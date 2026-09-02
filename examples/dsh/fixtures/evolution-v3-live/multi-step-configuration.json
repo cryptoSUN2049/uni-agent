@@ -1,0 +1,1 @@
+{"expected":"ready","input":"configuration probe","required_providers":["Service","Tool"],"schema":"dsh.evolution.live-fixture.v1"}

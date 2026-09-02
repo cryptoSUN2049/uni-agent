@@ -13,7 +13,7 @@ from typing import Any
 
 from examples.dsh.evolution_v3_catalog import FAMILY_IDS, canonical_json_bytes
 
-_FAMILY_KINDS = {
+FAMILY_VERIFIER_KINDS = {
     "runtime-grounding": "runtime_grounding",
     "lifecycle-composition": "lifecycle_composition",
     "multi-step-configuration": "multi_step_configuration",
@@ -180,6 +180,24 @@ def _result(*, eligible: bool, reasons: list[str]) -> dict[str, object]:
     }
 
 
+def verify_observation(
+    *,
+    family_id: object,
+    verifier_kind: object,
+    verifier_spec: object,
+    observation: object,
+) -> dict[str, object]:
+    """Apply one family rubric to a trusted observation projection."""
+    if not isinstance(family_id, str) or FAMILY_VERIFIER_KINDS.get(family_id) != verifier_kind:
+        return _result(eligible=False, reasons=["family_verifier_mismatch"])
+    if not isinstance(verifier_spec, dict):
+        return _result(eligible=False, reasons=["verifier_spec_not_object"])
+    if not isinstance(observation, dict):
+        return _result(eligible=False, reasons=["observation_not_object"])
+    verifier = _VERIFIERS[verifier_kind]
+    return _result(eligible=True, reasons=verifier(verifier_spec, observation))
+
+
 def verify_matrix_case(case: object) -> dict[str, object]:
     """Verify one CPU matrix case without trusting actor-authored success claims."""
     if not isinstance(case, dict):
@@ -196,15 +214,12 @@ def verify_matrix_case(case: object) -> dict[str, object]:
         return _result(eligible=False, reasons=["observation_digest_mismatch"])
     if case.get("schema") != "dsh.evolution.cpu-case.v1":
         return _result(eligible=False, reasons=["case_schema_invalid"])
-    family_id = case.get("family_id")
-    verifier_kind = case.get("verifier_kind")
-    if not isinstance(family_id, str) or _FAMILY_KINDS.get(family_id) != verifier_kind:
-        return _result(eligible=False, reasons=["family_verifier_mismatch"])
-    spec = case.get("verifier_spec")
-    if not isinstance(spec, dict):
-        return _result(eligible=False, reasons=["verifier_spec_not_object"])
-    verifier = _VERIFIERS[verifier_kind]
-    return _result(eligible=True, reasons=verifier(spec, observation))
+    return verify_observation(
+        family_id=case.get("family_id"),
+        verifier_kind=case.get("verifier_kind"),
+        verifier_spec=case.get("verifier_spec"),
+        observation=observation,
+    )
 
 
 def _matches_expected_outcome(case_kind: object, result: dict[str, object]) -> bool:

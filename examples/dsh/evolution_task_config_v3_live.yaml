@@ -1,0 +1,36 @@
+# Inference-only v3 live-contract profile. The generated task metadata binds
+# the full verifier bundle; this config keeps the executable and runtime under
+# operator control. It is not an online-RL release profile.
+- name: dsh_architecture
+  sandbox:
+    provider: local
+    runtime_timeout: 1800
+  agent:
+    name: dsh
+    model:
+      max_total_tokens: 4096
+      max_tokens_per_turn: 512
+    runner_python: python
+    runner_module: uni_agent.agents.dsh.runner
+    default_workdir: "."
+    profile: sdk-minimal
+    reasoning_effort: "off"
+    patches:
+      - examples/dsh/evolution.patch.yml
+    provider: deepseek-official
+    keep_trace: true
+    run_timeout: 1800
+  verifier_command:
+    - python
+    - -m
+    - examples.dsh.evolution_v3_live_verifier
+    - --scenario-file
+    - examples/dsh/evolution_v3_live_scenarios.jsonl
+  verifier_timeout: 300
+  result_root: /tmp/uni-agent-dsh-task/results
+  workdir: null
+  require_trace: true
+  environment_digest: null
+  verifier_id: dsh-harness-evolution-v3-live-verifier
+  verifier_version: "1"
+  verifier_code_digest: sha256:ee8390f816a0b1591a30a26ab28384ed45c4abd37bdfdee0bf7d5abc1a56944d

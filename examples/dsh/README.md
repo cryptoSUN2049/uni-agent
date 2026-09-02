@@ -98,6 +98,35 @@ SHA-256. This CPU release proves labeling semantics and deterministic
 generation only: it is not Parquet training data, a frozen 96/32 corpus, or
 evidence of model improvement.
 
+### v3 live-contract gate
+
+The CPU matrix uses authored observations and cannot prove that a DSH process
+emits the evidence expected by each rubric. Generate the separate eight-row
+live-contract bundle before expanding the candidate corpus:
+
+```sh
+PYTHONPATH=. python -m examples.dsh.evolution_v3_live \
+  --output-dir /absolute/path/to/dsh-evolution-v3-live \
+  --environment-digest sha256:<pinned-runtime-digest> \
+  --patch examples/dsh/evolution.patch.yml
+```
+
+The command writes executable `dsh_architecture` task rows and a deterministic
+manifest. The manifest remains `status=blocked` with
+`LIVE_FAMILY_SMOKE_PENDING`; generation does not run a model or require a GPU.
+Use `evolution_task_config_v3_live.yaml` for the process smoke. Its verifier
+reconstructs observations from the hash-bound SessionEvent trace, checks the
+immutable fixture, enforces the declared turn/tool/mutation budgets, and keeps
+trusted rubric fields outside the policy-visible row. It rejects unsafe or
+unverifiable traces with `eligible=false`; a safe task failure remains
+eligible with zero reward.
+
+Run exactly one real DSH episode for each family and retain all eight task
+envelopes, traces, and fresh verifier receipts. Only that evidence can clear
+the live-contract gate. Trace-replay unit tests and bundle generation do not
+clear it, and neither result authorizes the 96/32 release or a GPU training
+run.
+
 ### Expanded v2 corpus
 
 `evolution_scenarios_v2.jsonl` is the first non-bootstrap release input for a
