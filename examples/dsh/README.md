@@ -71,6 +71,33 @@ This exercises Gateway token capture, the DSH SDK subprocess, the fresh verifier
 
 ## Bounded Harness evolution task
 
+### v3 CPU release gate
+
+Before authoring the larger v3 candidate pool or renting a GPU, generate the
+canonical eight-family CPU release into a new directory and verify all 24
+cases:
+
+```sh
+PYTHONPATH=. python -m examples.dsh.evolution_v3_catalog \
+  --output-dir /absolute/path/to/dsh-evolution-v3-cpu
+PYTHONPATH=. python -m examples.dsh.evolution_v3_verifier \
+  /absolute/path/to/dsh-evolution-v3-cpu/cpu-matrix.jsonl
+```
+
+The verifier command must report `24` cases, `16` eligible cases, `8` passed
+cases, and `8` rejected cases. Each family contributes one success, one valid
+policy failure, and one observation-digest tamper case. A valid failure remains
+eligible with zero reward so it can represent a learnable policy outcome; a
+tamper case is ineligible and must never enter an optimizer batch.
+
+`evolution_v3_catalog.json` is the authored source. The generated task seeds
+omit verifier specifications and expected observations, while
+`cpu-matrix.jsonl` keeps those trusted fields on the verifier side. The
+manifest binds the catalog, complete verifier bundle, and generated files by
+SHA-256. This CPU release proves labeling semantics and deterministic
+generation only: it is not Parquet training data, a frozen 96/32 corpus, or
+evidence of model improvement.
+
 ### Expanded v2 corpus
 
 `evolution_scenarios_v2.jsonl` is the first non-bootstrap release input for a
