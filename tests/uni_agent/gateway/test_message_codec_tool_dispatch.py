@@ -59,14 +59,12 @@ def test_hermes_recovery_accepts_only_terminal_missing_json_closers():
     assert calls[0].name == "search"
     assert json.loads(calls[0].arguments) == {"query": "docs"}
 
-    malformed_middle = (
-        '<tool_call>\n{"name":"search","arguments":{"query":"docs"}\n</tool_call>'
-        '<tool_call>\n{"name":"search","arguments":{"query":}\n</tool_call>'
-    )
+    valid_call = '<tool_call>\n{"name":"search","arguments":{"query":"docs"}}\n</tool_call>'
+    malformed_middle = valid_call + '<tool_call>\n{"name":"search","arguments":{"query":}\n</tool_call>' + valid_call
     assert _recover_hermes_tool_calls(malformed_middle) is None
 
 
-def test_vllm_hermes_parser_falls_back_to_bounded_recovery(monkeypatch):
+def test_vllm_hermes_parser_falls_back_to_bounded_recovery(monkeypatch, caplog):
     from vllm.tool_parsers import ToolParserManager
 
     from uni_agent.gateway.session.codec import MessageCodec
@@ -80,9 +78,39 @@ def test_vllm_hermes_parser_falls_back_to_bounded_recovery(monkeypatch):
 
     monkeypatch.setattr(ToolParserManager, "get_tool_parser", classmethod(lambda cls, name: EmptyParser))
     text = '<tool_call>\n{"name":"search","arguments":{"query":"docs"}\n</tool_call>'
-    content, calls = MessageCodec(FakeTokenizer())._process_tool_calls_vllm(text, TOOLS, "hermes")
+    with caplog.at_level("INFO", logger="uni_agent.gateway.session.codec"):
+        content, calls = MessageCodec(FakeTokenizer())._process_tool_calls_vllm(text, TOOLS, "hermes")
     assert content == ""
     assert calls[0].name == "search"
+    assert "tool_parser_recovery backend=vllm parser=hermes recovered_calls=1" in caplog.text
+    assert "docs" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_vllm_parser_reports_attempt_and_rejection_without_model_content(monkeypatch, caplog):
+    from vllm.tool_parsers import ToolParserManager
+
+    from uni_agent.gateway.session.codec import MessageCodec
+
+    class RejectingParser:
+        def __init__(self, tokenizer):
+            self.tokenizer = tokenizer
+
+        def extract_tool_calls(self, text, request):
+            del text, request
+            raise ValueError("invalid call")
+
+    monkeypatch.setattr(ToolParserManager, "get_tool_parser", classmethod(lambda cls, name: RejectingParser))
+    text = '<tool_call>{"private":"do-not-log"}</tool_call>'
+    codec = MessageCodec(FakeTokenizer(), rollout_backend="vllm")
+
+    with caplog.at_level("INFO", logger="uni_agent.gateway.session.codec"):
+        with pytest.raises(RuntimeError, match="vllm tool parser 'hermes' failed"):
+            await codec._extract_tool_calls(_ids(text), TOOLS, "hermes")
+
+    assert "tool_parser_attempt backend=vllm parser=hermes" in caplog.text
+    assert "tool_parser_rejection backend=vllm parser=hermes rejected_calls=1" in caplog.text
+    assert "do-not-log" not in caplog.text
 
 
 @pytest.mark.parametrize(

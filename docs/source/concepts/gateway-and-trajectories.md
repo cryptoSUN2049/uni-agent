@@ -135,6 +135,8 @@ The Gateway uses a `MessageCodec` to:
 
 The configured Tool parser must match the model's chat template.
 
+Each parser invocation emits structured attempt, recovery, or rejection telemetry containing only the backend name, parser name, outcome, and integer counts. It never logs response text or Tool arguments. Operators can therefore compute malformed-call rates without inspecting model content or credentials.
+
 ## Multiple Turns and Chains
 
 One session may contain multiple model turns. Tool observations are encoded as continuation tokens and marked with `response_mask=0`, while model completions are marked with `response_mask=1`.

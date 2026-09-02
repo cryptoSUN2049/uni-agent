@@ -11,7 +11,17 @@ if [[ ! -d "${RUN_ROOT}" ]]; then
   exit 2
 fi
 echo "run_root=${RUN_ROOT}"
+manifest_status=""
 if [[ -f "${RUN_ROOT}/run-manifest.json" ]]; then
+  manifest_status="$("${PYTHON_BIN}" - "${RUN_ROOT}/run-manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(value.get("status", ""))
+PY
+)"
   "${PYTHON_BIN}" - "${RUN_ROOT}/run-manifest.json" <<'PY'
 import json
 import sys
@@ -41,18 +51,34 @@ pid=""
 if [[ -f "${RUN_ROOT}/pid" ]]; then
   pid="$(tr -d '[:space:]' < "${RUN_ROOT}/pid")"
 fi
+process_running=0
+process_state=""
 if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+  process_state="$(ps -o stat= -p "${pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+if [[ -n "${process_state}" && "${process_state}" != Z* ]]; then
+  process_running=1
   echo "process=running pid=${pid}"
   ps -p "${pid}" -o pid,ppid,stat,etime,%cpu,%mem,cmd || true
 else
   echo "process=not-running pid=${pid:-unknown}"
 fi
+if [[ -z "${manifest_status}" ]]; then
+  echo "manifest_process_consistency=unknown"
+elif [[ "${manifest_status}" == "running" && "${process_running}" -eq 0 ]]; then
+  echo "manifest_process_consistency=stale-running"
+elif [[ "${manifest_status}" != "running" && "${process_running}" -eq 1 ]]; then
+  echo "manifest_process_consistency=terminal-process-running"
+else
+  echo "manifest_process_consistency=consistent"
+fi
 if [[ -f "${RUN_ROOT}/run.log" ]]; then
   echo "-- recent metrics/errors --"
   grep -E "Training Progress|global_step|Final validation|generate_sequences summary|run_task done|Saving checkpoint|Traceback|ERROR|segfault|No available memory" "${RUN_ROOT}/run.log" | tail -80 || true
 fi
+"${PYTHON_BIN}" "${SCRIPT_DIR}/summarize_parser_telemetry.py" "${RUN_ROOT}/run.log"
 echo "-- rollout progress --"
-task_log_count="$(find "${RUN_ROOT}/agent-logs" -name task.log -type f 2>/dev/null | wc -l | tr -d ' ')"
+task_log_count="$(find "${RUN_ROOT}/agent-logs" -name task.log -type f 2>/dev/null | wc -l | tr -d ' ' || true)"
 finished_task_count="$(grep -R -l --include=task.log "run_task done:" "${RUN_ROOT}/agent-logs" 2>/dev/null | wc -l | tr -d ' ' || true)"
 failed_task_count="$(grep -R -l --include=task.log "finished=False\|failure" "${RUN_ROOT}/agent-logs" 2>/dev/null | wc -l | tr -d ' ' || true)"
 echo "task_logs_started=${task_log_count} task_logs_finished=${finished_task_count} task_logs_with_failure=${failed_task_count}"

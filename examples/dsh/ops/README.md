@@ -46,6 +46,10 @@ examples/dsh/ops/launch_qwen3_4b_online_rl.sh
 examples/dsh/ops/status_qwen3_4b_online_rl.sh /workspace/runs/dsh-evolution-v2-online-rl
 ```
 
+新 revision 的状态输出包含 parser attempt、recovered/rejected call 数量和
+malformed-attempt rate。若旧日志只有 vLLM error 而没有结构化 attempt marker，
+脚本会报告 `parser_telemetry_complete=false` 和 `unavailable`，不会伪造错误率。
+
 如果作业已结束，先从 status 输出找到 checkpoint，再以独立 run root 做验证：
 
 ```sh

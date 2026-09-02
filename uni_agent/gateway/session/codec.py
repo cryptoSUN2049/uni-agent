@@ -405,14 +405,25 @@ class MessageCodec:
         except Exception:
             recovered = _recover_hermes_tool_calls(text) if parser_name == "hermes" else None
             if recovered is not None:
-                logger.warning("vLLM Hermes parser failed; recovered complete terminal tool-call prefix")
+                logger.warning(
+                    "tool_parser_recovery backend=vllm parser=hermes recovered_calls=%s reason=exception",
+                    len(recovered[1]),
+                )
                 return recovered
             raise
         if not parsed.tools_called:
             recovered = _recover_hermes_tool_calls(text) if parser_name == "hermes" else None
             if recovered is not None:
-                logger.warning("vLLM Hermes parser rejected a terminal partial call; recovered complete calls")
+                logger.warning(
+                    "tool_parser_recovery backend=vllm parser=hermes recovered_calls=%s reason=no_calls",
+                    len(recovered[1]),
+                )
                 return recovered
+            if parser_name == "hermes" and "<tool_call>" in text:
+                logger.warning(
+                    "tool_parser_rejection backend=vllm parser=hermes rejected_calls=%s",
+                    text.count("<tool_call>"),
+                )
             return text, []
         return parsed.content or "", [tool_call.function for tool_call in parsed.tool_calls]
 
@@ -445,16 +456,32 @@ class MessageCodec:
     ) -> tuple[str, list[Any]]:
         text = self._tokenizer.decode(response_ids, skip_special_tokens=False)
         parser_backend = self._rollout_backend if self._rollout_backend in {"sglang", "vllm"} else "verl"
+        if parser_backend == "sglang":
+            effective_parser_name = _SGLANG_TOOL_PARSER_ALIASES.get(parser_name, parser_name)
+        elif parser_backend == "vllm":
+            effective_parser_name = _VLLM_TOOL_PARSER_ALIASES.get(parser_name, parser_name)
+        else:
+            effective_parser_name = parser_name
+        logger.info(
+            "tool_parser_attempt backend=%s parser=%s",
+            parser_backend,
+            effective_parser_name,
+        )
 
         try:
             if parser_backend == "sglang":
-                sglang_name = _SGLANG_TOOL_PARSER_ALIASES.get(parser_name, parser_name)
-                return self._process_tool_calls_sglang(text, tools, sglang_name)
+                return self._process_tool_calls_sglang(text, tools, effective_parser_name)
             if parser_backend == "vllm":
-                vllm_name = _VLLM_TOOL_PARSER_ALIASES.get(parser_name, parser_name)
-                return self._process_tool_calls_vllm(text, tools, vllm_name)
-            return await self._process_tool_calls_verl(response_ids, tools, parser_name)
+                return self._process_tool_calls_vllm(text, tools, effective_parser_name)
+            return await self._process_tool_calls_verl(response_ids, tools, effective_parser_name)
         except Exception as exc:
+            rejected_calls = max(text.count("<tool_call>"), 1) if effective_parser_name == "hermes" else 1
+            logger.warning(
+                "tool_parser_rejection backend=%s parser=%s rejected_calls=%s",
+                parser_backend,
+                effective_parser_name,
+                rejected_calls,
+            )
             raise RuntimeError(f"{parser_backend} tool parser {parser_name!r} failed") from exc
 
     async def decode_response(

@@ -13,6 +13,7 @@ LAUNCHER = REPO_ROOT / "examples/dsh/ops/launch_qwen3_4b_online_rl.sh"
 TRAINING_LAUNCHER = REPO_ROOT / "examples/dsh/train_qwen3_4b_online_rl.sh"
 SUPERVISOR = REPO_ROOT / "examples/dsh/ops/supervise_qwen3_4b_online_rl.sh"
 TEARDOWN = REPO_ROOT / "examples/dsh/ops/teardown_qwen3_4b_online_rl.sh"
+STATUS = REPO_ROOT / "examples/dsh/ops/status_qwen3_4b_online_rl.sh"
 
 
 def _start_signal_aware_supervisor(tmp_path: Path) -> tuple[subprocess.Popen[str], Path, Path]:
@@ -238,3 +239,47 @@ def test_supervisor_records_an_immediate_worker_failure(tmp_path: Path):
     assert manifest["status"] == "failed"
     assert manifest["exit_code"] == 31
     assert manifest["finished_at"]
+
+
+@pytest.mark.parametrize(
+    ("events", "expected"),
+    [
+        (
+            "tool_parser_attempt backend=vllm parser=hermes\n",
+            "parser_attempts=1 parser_recovered_calls=0 parser_rejected_calls=0 "
+            "parser_malformed_attempts=0 parser_malformed_rate=0.000000",
+        ),
+        (
+            "tool_parser_attempt backend=vllm parser=hermes\n"
+            "tool_parser_recovery backend=vllm parser=hermes recovered_calls=2\n"
+            "tool_parser_attempt backend=vllm parser=hermes\n"
+            "tool_parser_rejection backend=vllm parser=hermes rejected_calls=1\n"
+            "tool_parser_attempt backend=vllm parser=hermes\n",
+            "parser_attempts=3 parser_recovered_calls=2 parser_rejected_calls=1 "
+            "parser_malformed_attempts=2 parser_malformed_rate=0.666667",
+        ),
+        (
+            "Error in extracting tool call from response.\n",
+            "parser_attempts=0 parser_recovered_calls=0 parser_rejected_calls=0 "
+            "parser_malformed_attempts=0 parser_malformed_rate=unavailable "
+            "parser_telemetry_complete=false parser_unmatched_legacy_errors=1",
+        ),
+    ],
+    ids=["zero-malformed", "recovered-and-rejected", "legacy-incomplete"],
+)
+def test_status_reports_structured_parser_counters(tmp_path: Path, events: str, expected: str):
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    (run_root / "run.log").write_text(events, encoding="utf-8")
+    env = {**os.environ, "PYTHON_BIN": sys.executable, "DSH_VENV": str(tmp_path / "missing-venv")}
+
+    result = subprocess.run(
+        ["/bin/bash", str(STATUS), str(run_root)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert expected in result.stdout
