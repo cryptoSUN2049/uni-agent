@@ -36,7 +36,30 @@ examples/dsh/ops/launch_qwen3_4b_online_rl.sh
 命令写入 `command.txt`，把 supervisor/worker PID、代码 revision、数据 digest
 写入 `run-manifest.json`。supervisor 会等待训练进程，最终记录 `completed`、
 `failed` 或 `interrupted`、退出码和结束时间；后台子进程退出后 manifest 不会继续
-误报 `running`。
+误报 `running`。新 run 还会把 DSH trace、task envelope 和 fresh verifier receipt
+写入 `RUN_ROOT/artifacts/`；trajectory dump 写失败或证据校验失败时，完整 rollout
+group 会在进入 TransferQueue 前被拒绝。
+
+## 审计 trajectory group
+
+Frozen-base calibration 完成后、启动 optimizer run 前，先审计对应 partition：
+
+```sh
+PYTHONPATH=. python examples/dsh/ops/audit_qwen3_4b_online_rl.py \
+  /workspace/runs/<calibration-run> --partition val
+```
+
+正式训练结束后对完整 run 再执行一次，不传 `--partition` 即同时检查 train 与 val。
+命令只读取 `run-manifest.json` 声明的路径和 rollout 数量，逐 group 核验 token/mask/
+logprob 对齐、NPZ digest、fresh receipt、trace/artifact hash、partition/task/environment/
+verifier identity，并按 `(global_step, TransferQueue key)` 对应 trainer row；稳定报告原子
+写入 `trajectory-audit.json`。退出码 `0` 要求 manifest 已为 `completed`，且所有 group
+均为 `eligible-and-consumed`；退出码 `1` 表示仍有 `eligible-not-consumed`、`rejected`、
+legacy dump 或无法对应的 trainer row；退出码 `2` 表示 manifest 或声明输入不可读取。
+`eligible-not-consumed` 仅说明轨迹本身可准入，但尚不能证明它已被本 step 消费。
+
+旧 v2 run 没有 group UID/TQ key crosswalk，也没有 manifest 中的 artifact 路径，
+因此只能作为 `legacy-unjoinable` 证据，不能追认 C4 通过。
 
 ## 重启、查看、reload
 
@@ -80,4 +103,5 @@ RAY_STOP=1 examples/dsh/ops/teardown_qwen3_4b_online_rl.sh \\
 - Task config 使用 `runner_python: python`，必须让 `$DSH_VENV/bin` 位于 `PATH`；否则 Ray worker 可能落到 `/usr/bin/python` 并报 `No module named pydantic`。
 - 测试过的 VERL/torch memory-pool 路径不能继承 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments`；启动脚本会主动 unset。
 - `GPU_MEMORY_UTILIZATION=0.15` 只适用于带 eager、CPU offload 和 free-cache 的训练 launcher；直接用 inference 脚本时应按显存重新选择值。
+- C4 admission validator 当前要求 local Sandbox 与 framework 共享同一持久化文件系统；多节点或远程 Sandbox profile 必须先提供等价 artifact transport，不能静默关闭校验。
 - API key 不参与 SSH 或本地 DSH rollout。不要把 RunPod/PAT 写入仓库、manifest、command 或 `.env`；泄露过的 key 应先撤销并轮换。

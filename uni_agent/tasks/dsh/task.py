@@ -356,6 +356,7 @@ def _task_result(
             "environment_digest": identity["environment_digest"],
             "verifier_id": identity["verifier_id"],
             "verifier_version": identity["verifier_version"],
+            "verifier_code_digest": identity["verifier_code_digest"],
             "event_count": agent_result.info.get("event_count", 0),
         }
     }

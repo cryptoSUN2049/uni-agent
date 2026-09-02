@@ -162,6 +162,10 @@ exit "$TRAINING_EXIT_CODE"
         "has_finished_at": bool(manifest.get("finished_at")),
     }
     assert terminal_state == {"status": "failed", "exit_code": 23, "has_finished_at": True}
+    assert manifest["rollout"] == {"train_n": 4, "validation_n": 1}
+    assert manifest["paths"]["agent_log_dir"] == str(run_root / "agent-logs/dsh-qwen3-4b-online-rl/expanded-v2")
+    assert manifest["paths"]["trace_root"] == str(run_root / "artifacts/traces")
+    assert manifest["paths"]["result_root"] == str(run_root / "artifacts/results")
 
 
 def test_supervisor_forwards_term_and_records_interruption(tmp_path: Path):

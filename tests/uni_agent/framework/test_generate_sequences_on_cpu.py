@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import types
 from dataclasses import replace
@@ -25,6 +27,11 @@ def _recording_trajectory_postprocessor(trajectories, *, policy=None):
     return list(reversed(trajectories))
 
 
+def _context_recording_trajectory_postprocessor(trajectories, *, context):
+    _POSTPROCESSOR_CALLS.append((trajectories, context))
+    return list(trajectories)
+
+
 async def _async_trajectory_postprocessor(trajectories):
     await asyncio.sleep(0)
     return list(trajectories[-1:])
@@ -44,6 +51,12 @@ def _invalid_item_trajectory_postprocessor(trajectories):
 
 def _dropping_reward_info_postprocessor(trajectories):
     return [replace(trajectories[-1], reward_info={})]
+
+
+def _reject_response_99_postprocessor(trajectories):
+    if any(trajectory.response_ids == [99] for trajectory in trajectories):
+        raise ValueError("trajectory admission rejected")
+    return list(trajectories)
 
 
 async def _config_recording_runner(*, raw_prompt, session, sample_index, marker=None, **kwargs):
@@ -117,6 +130,8 @@ async def _build_framework_with_agent_runners(
     fail_on_rollout_error: bool = False,
     require_finished_episode: bool = False,
     require_verifier_reward: bool = False,
+    require_trajectory_dump: bool = False,
+    trajectory_postprocessor_pass_context: bool = False,
     trajectory_postprocessor_fqn: str | None = None,
     trajectory_postprocessor_kwargs: object | None = None,
 ):
@@ -128,6 +143,8 @@ async def _build_framework_with_agent_runners(
         "fail_on_rollout_error": fail_on_rollout_error,
         "require_finished_episode": require_finished_episode,
         "require_verifier_reward": require_verifier_reward,
+        "require_trajectory_dump": require_trajectory_dump,
+        "trajectory_postprocessor_pass_context": trajectory_postprocessor_pass_context,
     }
     if log_dir is not None:
         agent_framework_cfg["log_dir"] = log_dir
@@ -463,6 +480,21 @@ async def test_framework_and_runner_logs_share_one_session_directory(tmp_path, f
     session_dirs = list(step_dir.iterdir())
     assert len(session_dirs) == 1
     assert session_dirs[0].name.startswith("session-sample-0-rollout-0-")
+
+    trajectory_dump = json.loads((session_dirs[0] / "trajectory.json").read_text())
+    assert trajectory_dump["schema"] == "uni-agent.trajectory-dump.v2"
+    assert trajectory_dump["gateway_session_id"] == session_dirs[0].name
+    assert trajectory_dump["partition_id"] == "train"
+    assert trajectory_dump["global_steps"] == 12
+    assert trajectory_dump["group_uid"] == "uid-0"
+    assert trajectory_dump["group_size"] == 1
+    assert trajectory_dump["sample_index"] == 0
+    assert trajectory_dump["session_index"] == 0
+    assert trajectory_dump["trajectory_npz_sha256"] == (
+        "sha256:" + hashlib.sha256((session_dirs[0] / "trajectory.npz").read_bytes()).hexdigest()
+    )
+    assert trajectory_dump["trajectories"][0]["trajectory_index"] == 0
+    assert trajectory_dump["trajectories"][0]["transfer_queue_key"] == "uid-0_0_0"
 
     framework_log = session_dirs[0] / "framework.log"
     task_log = session_dirs[0] / "task.log"
@@ -851,6 +883,26 @@ async def test_framework_rejects_non_boolean_verifier_reward_config():
         )
 
 
+@pytest.mark.asyncio
+async def test_framework_rejects_non_boolean_required_trajectory_dump_config():
+    with pytest.raises(ValueError, match="require_trajectory_dump must be a bool"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            require_trajectory_dump="true",  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_framework_rejects_non_boolean_postprocessor_context_config():
+    with pytest.raises(ValueError, match="trajectory_postprocessor_pass_context must be a bool"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            trajectory_postprocessor_pass_context="true",  # type: ignore[arg-type]
+        )
+
+
 def test_align_routed_experts_preserves_backend_dtype():
     aligned = _align_routed_experts(np.array([[[256, 511]]], dtype=np.uint16), seq_len=2)
 
@@ -979,6 +1031,32 @@ async def test_trajectory_postprocessor_applies_kwargs_before_scoring_and_tq(mon
     fields = fake_tq.batch_puts[0]["fields"]
     assert [response.tolist() for response in fields["responses"]] == [[30], [20]]
     assert [score.tolist() for score in fields["rm_scores"]] == [[0.5], [0.5]]
+
+
+@pytest.mark.asyncio
+async def test_trajectory_postprocessor_receives_runtime_context_when_enabled(fake_tq):
+    _POSTPROCESSOR_CALLS.clear()
+    runtime = _FakeGatewayManager({"session-sample-0-rollout-0": [_trajectory()]})
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        trajectory_postprocessor_fqn=f"{__name__}._context_recording_trajectory_postprocessor",
+        trajectory_postprocessor_pass_context=True,
+    )
+
+    await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    _processed_input, context = _POSTPROCESSOR_CALLS[0]
+    gateway_session_id = context.pop("gateway_session_id")
+    assert gateway_session_id.startswith("session-sample-0-rollout-0-")
+    assert context == {
+        "partition_id": "train",
+        "global_steps": 8,
+        "group_uid": "uid-0",
+        "group_size": 1,
+        "sample_index": 0,
+        "session_index": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -1134,6 +1212,30 @@ async def test_generate_sequences_can_fail_closed_on_any_rollout_error(fake_tq):
 
 
 @pytest.mark.asyncio
+async def test_strict_group_rejects_all_siblings_when_postprocessor_rejects_one(fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [_trajectory(response_ids=[20])],
+            "session-sample-0-rollout-1": [_trajectory(response_ids=[99])],
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        n=2,
+        val_n=2,
+        fail_on_rollout_error=True,
+        trajectory_postprocessor_fqn=f"{__name__}._reject_response_99_postprocessor",
+    )
+
+    with pytest.raises(RuntimeError, match="rollout failure"):
+        await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    assert fake_tq.batch_puts == []
+    assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "failure"}}]
+
+
+@pytest.mark.asyncio
 async def test_strict_success_group_is_written_as_one_tq_batch(fake_tq):
     runtime = _FakeGatewayManager(
         {
@@ -1212,6 +1314,46 @@ async def test_require_verifier_reward_requires_strict_group_submission():
             gateway_manager=_FakeGatewayManager({}),
             require_verifier_reward=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_require_trajectory_dump_requires_strict_group_submission():
+    with pytest.raises(ValueError, match="require_trajectory_dump requires fail_on_rollout_error"):
+        await _build_framework_with_agent_runners(
+            agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+            gateway_manager=_FakeGatewayManager({}),
+            require_trajectory_dump=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_required_trajectory_dump_failure_rejects_complete_group(monkeypatch, tmp_path, fake_tq):
+    runtime = _FakeGatewayManager(
+        {
+            "session-sample-0-rollout-0": [_trajectory()],
+            "session-sample-0-rollout-1": [_trajectory()],
+        }
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(_async_noop_runner)},
+        gateway_manager=runtime,
+        n=2,
+        val_n=2,
+        log_dir=str(tmp_path),
+        fail_on_rollout_error=True,
+        require_trajectory_dump=True,
+    )
+
+    def fail_dump(*args, **kwargs):
+        raise OSError("audit storage unavailable")
+
+    monkeypatch.setattr(framework, "_dump_trajectories", fail_dump)
+
+    with pytest.raises(RuntimeError, match="rollout failure"):
+        await framework.generate_sequences(_build_prompts(count=1, global_steps=8))
+
+    assert fake_tq.batch_puts == []
+    assert fake_tq.puts == [{"key": "uid-0", "partition_id": "train", "tag": {"status": "failure"}}]
 
 
 @pytest.mark.parametrize(

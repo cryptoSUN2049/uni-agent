@@ -8,7 +8,7 @@ The first training proof uses the official dense `Qwen/Qwen3-4B` checkpoint as t
 
 ## Human-operated, restart-safe runbook
 
-For a repeatable RunPod or single-GPU run, use [`ops/README.md`](ops/README.md) instead of copying a long Hydra command. The five versioned entrypoints prepare the v2 seed data, launch detached or foreground training, report manifest/PID/rollout progress, validate a checkpoint in an independent run root, and tear down only a verified DSH process. The runbook keeps code and data digests in `manifest.json` and `run-manifest.json`; it never needs a repository API key or a checked-in `.env` file.
+For a repeatable RunPod or single-GPU run, use [`ops/README.md`](ops/README.md) instead of copying a long Hydra command. The versioned entrypoints prepare seed data, launch detached or foreground training, report manifest/PID/rollout progress, audit trajectory groups and their verifier artifacts, validate a checkpoint in an independent run root, and tear down only a verified DSH process. The runbook keeps code and data digests in `manifest.json` and `run-manifest.json`; it never needs a repository API key or a checked-in `.env` file.
 
 ## Seed metadata
 

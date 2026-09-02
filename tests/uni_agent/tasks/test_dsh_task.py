@@ -139,6 +139,7 @@ def test_task_writes_minimal_envelope_and_returns_verifier_reward() -> None:
     assert dsh_info["freshness"] == "fresh"
     assert dsh_info["task_id"] == "dsh/architecture/intro"
     assert dsh_info["receipt_sha256"].startswith("sha256:")
+    assert dsh_info["verifier_code_digest"].startswith("sha256:")
     assert "receipt_path" not in dsh_info
     receipt_paths = [path for path in sandbox.writes if path.endswith("verifier-receipt.json")]
     assert len(receipt_paths) == 1

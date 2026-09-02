@@ -18,6 +18,7 @@ def test_qwen3_4b_launcher_prints_strict_online_rl_contract():
         "MODEL_PATH": "/models/Qwen3-4B-snapshot",
         "TRAIN_FILE": "/data/dsh-train.parquet",
         "TEST_FILE": "/data/dsh-validation.parquet",
+        "RUN_ROOT": "/runs/dsh-test",
     }
     result = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env=env)
 
@@ -32,6 +33,7 @@ def test_qwen3_4b_launcher_prints_strict_online_rl_contract():
         "actor_rollout_ref.model.lora_rank=32",
         "++actor_rollout_ref.model.override_config.attn_implementation=sdpa",
         "actor_rollout_ref.rollout.n=2",
+        "actor_rollout_ref.rollout.val_kwargs.n=1",
         "actor_rollout_ref.rollout.multi_turn.format=hermes",
         "data.apply_chat_template_kwargs.enable_thinking=False",
         "uni_agent.framework.entry.AgentFrameworkRolloutAdapter",
@@ -40,6 +42,13 @@ def test_qwen3_4b_launcher_prints_strict_online_rl_contract():
         "fail_on_rollout_error=True",
         "require_finished_episode=True",
         "require_verifier_reward=True",
+        "require_trajectory_dump=True",
+        "trajectory_postprocessor_fqn=uni_agent.tasks.dsh.trajectory_audit.validate_trajectories",
+        "trajectory_postprocessor_pass_context=True",
+        "runner_kwargs.dsh_trace_root=/runs/dsh-test/artifacts/traces",
+        "runner_kwargs.dsh_result_root=/runs/dsh-test/artifacts/results",
+        "trajectory_postprocessor_kwargs.trace_root=/runs/dsh-test/artifacts/traces",
+        "trajectory_postprocessor_kwargs.result_root=/runs/dsh-test/artifacts/results",
         "trainer.save_freq=1",
         "trainer.total_training_steps=1",
         "data.train_max_samples=1",

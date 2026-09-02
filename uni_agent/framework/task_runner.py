@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -76,6 +77,34 @@ def _inject_gateway_tunnel(task: dict[str, Any], base_url: str) -> dict[str, Any
     )
 
 
+def _inject_dsh_artifact_roots(
+    task: dict[str, Any],
+    *,
+    trace_root: str | None,
+    result_root: str | None,
+) -> dict[str, Any]:
+    """Bind one DSH run to operator-owned persistent evidence directories."""
+    if trace_root is None and result_root is None:
+        return task
+    if task.get("name") != "dsh_architecture":
+        raise ValueError("DSH artifact roots are supported only for dsh_architecture tasks")
+    if trace_root is None or result_root is None:
+        raise ValueError("dsh_trace_root and dsh_result_root must be configured together")
+    for name, value in (("dsh_trace_root", trace_root), ("dsh_result_root", result_root)):
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be an absolute traversal-free path")
+        path = PurePosixPath(value)
+        if not value.strip() or not path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"{name} must be an absolute traversal-free path")
+    return _deep_merge(
+        task,
+        {
+            "agent": {"artifact_root": trace_root},
+            "result_root": result_root,
+        },
+    )
+
+
 async def run_task(
     *,
     session: SessionHandle,
@@ -87,6 +116,8 @@ async def run_task(
     model_name: str | None = None,
     report_reward: bool = False,
     require_reward_post: bool = False,
+    dsh_trace_root: str | None = None,
+    dsh_result_root: str | None = None,
     **_: Any,
 ) -> TaskResult:
     """Resolve the sample's task, run it against ``session``, and return its result.
@@ -123,6 +154,11 @@ async def run_task(
             "api_key": api_key,
             "model_name": model_name,
         },
+    )
+    task = _inject_dsh_artifact_roots(
+        task,
+        trace_root=dsh_trace_root,
+        result_root=dsh_result_root,
     )
 
     # openyuanrong reverse tunnel: the sandbox config pins the in-sandbox tunnel

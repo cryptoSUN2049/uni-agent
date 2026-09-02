@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import io
 import json
@@ -35,6 +36,7 @@ from verl.utils.transferqueue_utils import tq
 
 from .base import AgentFramework
 from .multi_modal_postprocess import compute_multi_modal_inputs, compute_position_ids
+from .trajectory_identity import trajectory_tq_key
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +327,8 @@ class GatewayAgentFramework(AgentFramework):
         fail_on_rollout_error: bool = False,
         require_finished_episode: bool = False,
         require_verifier_reward: bool = False,
+        require_trajectory_dump: bool = False,
+        trajectory_postprocessor_pass_context: bool = False,
         trajectory_postprocessor: TrajectoryPostprocessor | None = None,
         trajectory_postprocessor_kwargs: dict[str, object] | None = None,
     ):
@@ -347,6 +351,8 @@ class GatewayAgentFramework(AgentFramework):
         self._fail_on_rollout_error = fail_on_rollout_error
         self._require_finished_episode = require_finished_episode
         self._require_verifier_reward = require_verifier_reward
+        self._require_trajectory_dump = require_trajectory_dump
+        self._trajectory_postprocessor_pass_context = trajectory_postprocessor_pass_context
         self._trajectory_postprocessor = trajectory_postprocessor
         self._trajectory_postprocessor_kwargs = trajectory_postprocessor_kwargs or {}
 
@@ -398,6 +404,18 @@ class GatewayAgentFramework(AgentFramework):
         if require_verifier_reward and not fail_on_rollout_error:
             raise ValueError("require_verifier_reward requires fail_on_rollout_error")
 
+        require_trajectory_dump = af_cfg.get("require_trajectory_dump", False)
+        if type(require_trajectory_dump) is not bool:
+            raise ValueError("actor_rollout_ref.rollout.custom.agent_framework.require_trajectory_dump must be a bool")
+        if require_trajectory_dump and not fail_on_rollout_error:
+            raise ValueError("require_trajectory_dump requires fail_on_rollout_error")
+
+        postprocessor_pass_context = af_cfg.get("trajectory_postprocessor_pass_context", False)
+        if type(postprocessor_pass_context) is not bool:
+            raise ValueError(
+                "actor_rollout_ref.rollout.custom.agent_framework.trajectory_postprocessor_pass_context must be a bool"
+            )
+
         postprocessor_fqn = af_cfg.get("trajectory_postprocessor_fqn")
         postprocessor_kwargs = af_cfg.get("trajectory_postprocessor_kwargs")
         if postprocessor_kwargs is None:
@@ -423,6 +441,10 @@ class GatewayAgentFramework(AgentFramework):
             if not callable(trajectory_postprocessor):
                 raise TypeError(f"Trajectory postprocessor {postprocessor_fqn!r} must resolve to a callable")
             trajectory_postprocessor_kwargs = dict(postprocessor_kwargs)
+        if postprocessor_pass_context and trajectory_postprocessor is None:
+            raise ValueError("trajectory_postprocessor_pass_context requires trajectory_postprocessor_fqn")
+        if postprocessor_pass_context and "context" in trajectory_postprocessor_kwargs:
+            raise ValueError("trajectory_postprocessor_kwargs.context is reserved for runtime context")
 
         return cls(
             gateway_manager=gateway_manager,
@@ -435,6 +457,8 @@ class GatewayAgentFramework(AgentFramework):
             fail_on_rollout_error=fail_on_rollout_error,
             require_finished_episode=require_finished_episode,
             require_verifier_reward=require_verifier_reward,
+            require_trajectory_dump=require_trajectory_dump,
+            trajectory_postprocessor_pass_context=postprocessor_pass_context,
             trajectory_postprocessor=trajectory_postprocessor,
             trajectory_postprocessor_kwargs=trajectory_postprocessor_kwargs,
         )
@@ -442,10 +466,17 @@ class GatewayAgentFramework(AgentFramework):
     async def _apply_trajectory_postprocessor(
         self,
         trajectories: list[Trajectory],
+        *,
+        context: dict[str, object] | None = None,
     ) -> list[Trajectory]:
         """Apply the optional sync/async postprocessor and validate its result."""
         expected_reward_info = deepcopy(trajectories[-1].reward_info) if trajectories else {}
-        result = self._trajectory_postprocessor(tuple(trajectories), **self._trajectory_postprocessor_kwargs)
+        kwargs = dict(self._trajectory_postprocessor_kwargs)
+        if self._trajectory_postprocessor_pass_context:
+            if context is None:
+                raise RuntimeError("trajectory postprocessor runtime context is unavailable")
+            kwargs["context"] = dict(context)
+        result = self._trajectory_postprocessor(tuple(trajectories), **kwargs)
         if inspect.isawaitable(result):
             result = await result
 
@@ -617,6 +648,8 @@ class GatewayAgentFramework(AgentFramework):
                 sample_index=sample_index,
                 session_index=session_index,
                 global_steps=global_steps,
+                partition_id=partition_id,
+                group_size=num_sessions,
                 sampling_params=sampling_params,
             )
             for session_index in range(num_sessions)
@@ -759,6 +792,8 @@ class GatewayAgentFramework(AgentFramework):
         sample_index: int,
         session_index: int,
         global_steps: int | None,
+        partition_id: str,
+        group_size: int,
         sampling_params: dict[str, object],
     ) -> tuple[list[Trajectory], dict[str, object]]:
         # Lazy-init semaphores on first use and rebind if the running loop
@@ -790,6 +825,8 @@ class GatewayAgentFramework(AgentFramework):
                 sample_index=sample_index,
                 session_index=session_index,
                 global_steps=global_steps,
+                partition_id=partition_id,
+                group_size=group_size,
                 runner_name=runner_name,
                 runner_config=runner_config,
                 sampling_params=sampling_params,
@@ -806,6 +843,8 @@ class GatewayAgentFramework(AgentFramework):
                 sample_index=sample_index,
                 session_index=session_index,
                 global_steps=global_steps,
+                partition_id=partition_id,
+                group_size=group_size,
                 runner_name=runner_name,
                 runner_config=runner_config,
                 sampling_params=sampling_params,
@@ -818,6 +857,8 @@ class GatewayAgentFramework(AgentFramework):
         sample_index: int,
         session_index: int,
         global_steps: int | None,
+        partition_id: str,
+        group_size: int,
         runner_name: str,
         runner_config: _RunnerConfig,
         sampling_params: dict[str, object],
@@ -926,7 +967,18 @@ class GatewayAgentFramework(AgentFramework):
                 raise
 
             if self._trajectory_postprocessor is not None:
-                session_trajectories = await self._apply_trajectory_postprocessor(session_trajectories)
+                session_trajectories = await self._apply_trajectory_postprocessor(
+                    session_trajectories,
+                    context={
+                        "partition_id": partition_id,
+                        "gateway_session_id": session_id,
+                        "global_steps": global_steps,
+                        "group_uid": uid,
+                        "group_size": group_size,
+                        "sample_index": sample_index,
+                        "session_index": session_index,
+                    },
+                )
 
             if not session_trajectories:
                 session_trace.finish(
@@ -960,7 +1012,18 @@ class GatewayAgentFramework(AgentFramework):
 
             self._log_trajectory_summary(session_id, result_trajectories)
             if run_dir is not None:
-                await asyncio.to_thread(self._dump_trajectories, run_dir, session_id, result_trajectories)
+                await asyncio.to_thread(
+                    self._dump_trajectories,
+                    run_dir,
+                    session_id,
+                    result_trajectories,
+                    partition_id=partition_id,
+                    global_steps=global_steps,
+                    group_uid=uid,
+                    group_size=group_size,
+                    sample_index=sample_index,
+                    session_index=session_index,
+                )
             session_trace.finish(
                 runner_name=runner_name,
                 status="success",
@@ -1022,7 +1085,19 @@ class GatewayAgentFramework(AgentFramework):
             )
         logger.info("\n".join(lines))
 
-    def _dump_trajectories(self, run_dir: Path, session_id: str, trajectories: list[Trajectory]) -> None:
+    def _dump_trajectories(
+        self,
+        run_dir: Path,
+        session_id: str,
+        trajectories: list[Trajectory],
+        *,
+        partition_id: str,
+        global_steps: int | None,
+        group_uid: str,
+        group_size: int,
+        sample_index: int,
+        session_index: int,
+    ) -> None:
         """Persist finalized trajectories next to ``task.log``.
 
         Split by cost: a small human-readable summary (reward, turns, lengths) is written
@@ -1031,20 +1106,13 @@ class GatewayAgentFramework(AgentFramework):
         (token ids repeat, the mask is runs of 0/1), so this is far smaller and faster than
         the old indented-JSON dump -- which matters most on a network / HDFS log_dir.
 
-        Runs off the event loop (caller wraps this in ``asyncio.to_thread``) and is
-        best-effort: an IO / serialization error is logged but never aborts the rollout.
+        Runs off the event loop (caller wraps this in ``asyncio.to_thread``). An IO
+        or serialization error is best-effort by default; ``require_trajectory_dump``
+        turns it into a session failure so strict groups cannot enter TransferQueue
+        without their audit crosswalk.
         """
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
-            meta = {
-                "session_id": session_id,
-                "num_trajectories": len(trajectories),
-                "trajectories": [self._trajectory_meta(traj) for traj in trajectories],
-            }
-            (run_dir / "trajectory.json").write_text(
-                json.dumps(meta, ensure_ascii=False, separators=(",", ":"), default=_json_default),
-                encoding="utf-8",
-            )
             arrays: dict[str, np.ndarray] = {}
             for i, traj in enumerate(trajectories):
                 arrays[f"traj{i}_prompt_ids"] = np.asarray(traj.prompt_ids, dtype=np.int32)
@@ -1055,14 +1123,52 @@ class GatewayAgentFramework(AgentFramework):
 
             buf = io.BytesIO()
             np.savez_compressed(buf, **arrays)
-            (run_dir / "trajectory.npz").write_bytes(buf.getvalue())
+            npz_bytes = buf.getvalue()
+            meta = {
+                "schema": "uni-agent.trajectory-dump.v2",
+                "session_id": session_id,
+                "gateway_session_id": session_id,
+                "partition_id": partition_id,
+                "global_steps": global_steps,
+                "group_uid": group_uid,
+                "group_size": group_size,
+                "sample_index": sample_index,
+                "session_index": session_index,
+                "trajectory_npz_sha256": "sha256:" + hashlib.sha256(npz_bytes).hexdigest(),
+                "num_trajectories": len(trajectories),
+                "trajectories": [
+                    self._trajectory_meta(
+                        traj,
+                        trajectory_index=index,
+                        transfer_queue_key=trajectory_tq_key(group_uid, session_index, index),
+                    )
+                    for index, traj in enumerate(trajectories)
+                ],
+            }
+            json_payload = json.dumps(meta, ensure_ascii=False, separators=(",", ":"), default=_json_default)
+            npz_temporary = run_dir / "trajectory.npz.tmp"
+            json_temporary = run_dir / "trajectory.json.tmp"
+            npz_temporary.write_bytes(npz_bytes)
+            json_temporary.write_text(json_payload, encoding="utf-8")
+            npz_temporary.replace(run_dir / "trajectory.npz")
+            json_temporary.replace(run_dir / "trajectory.json")
         except Exception:
+            if self._require_trajectory_dump:
+                raise
             logger.exception("session %s: failed to write trajectory dump under %s", session_id, run_dir)
 
-    def _trajectory_meta(self, traj: Trajectory) -> dict[str, object]:
+    def _trajectory_meta(
+        self,
+        traj: Trajectory,
+        *,
+        trajectory_index: int,
+        transfer_queue_key: str,
+    ) -> dict[str, object]:
         """Small, human-readable per-trajectory summary; the token arrays live in the npz."""
         extra = traj.extra_fields or {}
         return {
+            "trajectory_index": trajectory_index,
+            "transfer_queue_key": transfer_queue_key,
             "num_turns": traj.num_turns,
             "finished": traj.reward_info.get("finished"),
             "reward_score": traj.reward_score,
@@ -1209,7 +1315,7 @@ class GatewayAgentFramework(AgentFramework):
                 global_steps=global_steps,
                 uid=uid,
             )
-            keys.append(f"{uid}_{session_index}_{index}")
+            keys.append(trajectory_tq_key(uid, session_index, index))
             fields.append(field)
             tags.append(tag)
         return keys, fields, tags
@@ -1254,7 +1360,7 @@ class GatewayAgentFramework(AgentFramework):
     ) -> None:
         """Remove candidate group keys after a strict TQ write failure."""
         trajectory_keys = [
-            f"{uid}_{session_index}_{index}"
+            trajectory_tq_key(uid, session_index, index)
             for session_index, trajectories, _sample_fields in session_outcomes
             for index in range(len(trajectories))
         ]

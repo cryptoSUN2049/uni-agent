@@ -81,6 +81,7 @@ actor_rollout_ref:
     custom:
       agent_framework:
         trajectory_postprocessor_fqn: my_recipe.trajectory.process_trajectories
+        trajectory_postprocessor_pass_context: true
         trajectory_postprocessor_kwargs:
           max_total_tokens: 262144  # 256K prompt + response tokens
 ```
@@ -98,6 +99,7 @@ from uni_agent.gateway.session import Trajectory
 def process_trajectories(
     trajectories: tuple[Trajectory, ...],
     *,
+    context: dict[str, object],
     max_total_tokens: int = 262_144,
 ) -> list[Trajectory]:
     return [
@@ -107,14 +109,17 @@ def process_trajectories(
     ]
 ```
 
-`trajectory_postprocessor_kwargs` is passed as keyword arguments. The processor
-receives a tuple and must return `list[Trajectory]`; returning an empty list
-filters the session out. An `async def` processor is also supported and is
-awaited. Returned trajectories must preserve the finalized session
-`reward_info` and keep their token arrays aligned because reward scoring,
-unfinished masking, and TransferQueue materialization run later. Use
-`dataclasses.replace` when constructing transformed trajectories so unrelated
-fields remain intact.
+`trajectory_postprocessor_kwargs` is passed as keyword arguments. When
+`trajectory_postprocessor_pass_context=true`, the Framework also passes the
+reserved `context` mapping with `partition_id`, `global_steps`, `group_uid`,
+`group_size`, `sample_index`, `session_index`, and `gateway_session_id`; the
+default is `false` for existing callables. The processor receives a tuple and must return
+`list[Trajectory]`; returning an empty list filters the session out. An
+`async def` processor is also supported and is awaited. Returned trajectories
+must preserve the finalized session `reward_info` and keep their token arrays
+aligned because reward scoring, unfinished masking, and TransferQueue
+materialization run later. Use `dataclasses.replace` when constructing
+transformed trajectories so unrelated fields remain intact.
 
 `max_total_tokens` above is defined by the example processor.
 This compact example drops oversized trajectories; a processor that
@@ -124,6 +129,16 @@ processor may define different keyword arguments or none at all.
 The hook is disabled when `trajectory_postprocessor_fqn` is omitted or `null`.
 In that case no extension is imported or called, and finalized trajectories
 continue through the original scoring, logging, and TransferQueue path.
+
+Verifier-backed DSH training configures
+`uni_agent.tasks.dsh.trajectory_audit.validate_trajectories` as this hook. It
+requires aligned non-empty response masks, finite rollout log probabilities,
+partition-consistent dataset identity, and hash-bound trace, result-envelope,
+and fresh-receipt files before scoring. It requires runtime context. An
+exception rejects the session; with strict group submission, one rejected
+session prevents every sibling under the same prompt UID from entering
+TransferQueue. DSH evidence roots must be visible to both the Task Sandbox and
+the Agent Framework process.
 
 The Gateway uses a `MessageCodec` to:
 
@@ -240,6 +255,9 @@ Important knobs include:
 - `require_verifier_reward`: requires a finite framework-owned
   `verifier_reward` equal to the optimization reward. Requires
   `fail_on_rollout_error=true` and defaults to `false`.
+- `require_trajectory_dump`: rejects a strict group when its trajectory dump
+  cannot be persisted. Requires `fail_on_rollout_error=true` and defaults to
+  `false`.
 - `enable_last_assistant_rollback`: reuses a chain when only its latest Assistant
   message is rewritten. Defaults to `true`; set it to `false` to preserve the
   previous split-on-rewrite behavior.
@@ -247,6 +265,8 @@ Important knobs include:
   callable that postprocesses finalized trajectories before reward scoring.
 - `trajectory_postprocessor_kwargs`: optional keyword arguments passed to the
   postprocessor.
+- `trajectory_postprocessor_pass_context`: passes the reserved runtime
+  `context` mapping to the postprocessor. Defaults to `false`.
 - `agent_runners`: Runner import paths and arguments.
 - `dispatch_mode`: inline async execution or Ray tasks.
 - `max_concurrent_sessions`: per-Runner concurrency limit.

@@ -62,6 +62,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-manifest", type=Path)
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--verl-root", type=Path)
+    parser.add_argument("--agent-log-dir", type=Path)
+    parser.add_argument("--rollout-data-dir", type=Path)
+    parser.add_argument("--validation-data-dir", type=Path)
+    parser.add_argument("--trace-root", type=Path)
+    parser.add_argument("--result-root", type=Path)
+    parser.add_argument("--train-rollouts", type=int)
+    parser.add_argument("--validation-rollouts", type=int)
     parser.add_argument("--dsh-sha")
     return parser
 
@@ -133,6 +140,25 @@ def main() -> None:
         manifest["verl_sha"] = _git_revision(args.verl_root)
     if args.dsh_sha:
         manifest["dsh_sha"] = args.dsh_sha
+    for name, path in (
+        ("agent_log_dir", args.agent_log_dir),
+        ("rollout_data_dir", args.rollout_data_dir),
+        ("validation_data_dir", args.validation_data_dir),
+        ("trace_root", args.trace_root),
+        ("result_root", args.result_root),
+    ):
+        if path:
+            manifest.setdefault("paths", {})[name] = str(path)
+    if args.train_rollouts is not None or args.validation_rollouts is not None:
+        rollout = manifest.setdefault("rollout", {})
+        if args.train_rollouts is not None:
+            if args.train_rollouts <= 0:
+                raise SystemExit("--train-rollouts must be positive")
+            rollout["train_n"] = args.train_rollouts
+        if args.validation_rollouts is not None:
+            if args.validation_rollouts <= 0:
+                raise SystemExit("--validation-rollouts must be positive")
+            rollout["validation_n"] = args.validation_rollouts
     temporary = manifest_path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(manifest_path)

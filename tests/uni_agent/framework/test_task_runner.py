@@ -3,6 +3,7 @@ import pytest
 from uni_agent.framework import task_runner
 from uni_agent.framework.task_runner import (
     _extract_upstream,
+    _inject_dsh_artifact_roots,
     _inject_gateway_tunnel,
     _reward_info_from_result,
     _rewrite_gateway_url,
@@ -53,6 +54,44 @@ def test_inject_gateway_tunnel_rejects_non_yuanrong_sandbox():
     task = {"sandbox": {"provider": "local", "sandbox_kwargs": {"proxy_port": 38197}}}
     with pytest.raises(ValueError, match="supported only on 'openyuanrong'"):
         _inject_gateway_tunnel(task, "http://gateway.example:40169/v1")
+
+
+def test_inject_dsh_artifact_roots_preserves_unrelated_task_config():
+    task = {
+        "name": "dsh_architecture",
+        "agent": {"name": "dsh", "step_limit": 10},
+        "result_root": "/tmp/old-results",
+    }
+
+    merged = _inject_dsh_artifact_roots(
+        task,
+        trace_root="/workspace/run/artifacts/traces",
+        result_root="/workspace/run/artifacts/results",
+    )
+
+    assert merged["agent"] == {
+        "name": "dsh",
+        "step_limit": 10,
+        "artifact_root": "/workspace/run/artifacts/traces",
+    }
+    assert merged["result_root"] == "/workspace/run/artifacts/results"
+
+
+@pytest.mark.parametrize(
+    ("trace_root", "result_root", "message"),
+    [
+        ("/workspace/traces", None, "configured together"),
+        ("relative/traces", "/workspace/results", "absolute traversal-free"),
+        ("/workspace/traces", "/workspace/../results", "absolute traversal-free"),
+    ],
+)
+def test_inject_dsh_artifact_roots_rejects_incomplete_or_unsafe_paths(trace_root, result_root, message):
+    with pytest.raises(ValueError, match=message):
+        _inject_dsh_artifact_roots(
+            {"name": "dsh_architecture", "agent": {"name": "dsh"}},
+            trace_root=trace_root,
+            result_root=result_root,
+        )
 
 
 def test_task_result_positional_field_order():
