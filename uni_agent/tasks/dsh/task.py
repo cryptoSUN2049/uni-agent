@@ -3,8 +3,9 @@
 The task keeps reward computation outside the DSH Agent process. The Agent
 produces a semantic trace reference; this task writes a minimal result envelope
 inside the same Sandbox and invokes an operator-owned verifier command. The
-verifier emits exactly one JSON object on stdout, which becomes the Uni-Agent
-TaskResult and, when enabled by the framework runner, the VERL reward.
+verifier emits exactly one JSON object on stdout, including a trusted training
+eligibility decision. The result becomes the Uni-Agent TaskResult and, when
+enabled by the framework runner, the VERL reward and admission lineage.
 """
 
 from __future__ import annotations
@@ -312,6 +313,9 @@ def _task_result(
     extra_info = verifier_result.get("extra_info", {})
     if not isinstance(extra_info, dict):
         raise RuntimeError("dsh_architecture verifier field 'extra_info' must be an object")
+    eligible = verifier_result.get("eligible")
+    if type(eligible) is not bool:
+        raise RuntimeError("dsh_architecture verifier field 'eligible' must be boolean")
     if verifier_result.get("fresh") is not True:
         raise RuntimeError("dsh_architecture verifier must declare fresh=true")
     evidence = _evidence(verifier_result.get("evidence"))
@@ -333,6 +337,7 @@ def _task_result(
         },
         "issued_at": issued_at,
         "fresh": True,
+        "eligible": eligible,
         "issuer": {"kind": "trusted-verifier", "id": "uni-agent-dsh"},
         "reward": reward,
         **({"accuracy": accuracy} if accuracy is not None else {}),
@@ -346,6 +351,7 @@ def _task_result(
             "schema": "dsh.verifier-receipt.v1",
             "receipt_sha256": receipt_id,
             "freshness": "fresh",
+            "eligible": eligible,
             "rollout_id": _required_info(agent_result.info, "gateway_session_id"),
             "task_id": identity["task_id"],
             "task_version": identity["task_version"],

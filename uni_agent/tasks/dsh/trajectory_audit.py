@@ -193,6 +193,9 @@ def _validate_result_artifacts(
     _require_equal(receipt.get("receipt_id"), receipt_sha256, field="verifier receipt receipt_id")
     if receipt.get("fresh") is not True or dsh.get("freshness") != "fresh":
         raise TrajectoryAuditError("DSH verifier receipt must be fresh")
+    _require_equal(dsh.get("eligible"), receipt.get("eligible"), field="reward_info.dsh.eligible")
+    if receipt.get("eligible") is not True:
+        raise TrajectoryAuditError("DSH verifier receipt must declare eligible=true")
     if receipt.get("finished") is not True:
         raise TrajectoryAuditError("DSH verifier receipt must declare finished=true")
     _require_equal(receipt.get("reward"), reward, field="verifier receipt reward")

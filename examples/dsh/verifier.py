@@ -110,6 +110,7 @@ def verify() -> dict[str, Any]:
     return {
         "reward": 1.0 if matched else 0.0,
         "accuracy": 1.0 if matched else 0.0,
+        "eligible": True,
         "finished": finished,
         "fresh": True,
         "issued_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),

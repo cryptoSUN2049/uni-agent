@@ -171,6 +171,7 @@ def test_evolution_verifier_caps_wrong_behavior_but_keeps_fresh_zero_or_partial_
     assert 0.0 < result["reward"] <= 0.40
     assert result["accuracy"] == 0.0
     assert result["fresh"] is True
+    assert result["eligible"] is True
 
 
 def test_evolution_verifier_hard_vetoes_shell_access(monkeypatch, tmp_path: Path) -> None:
@@ -179,6 +180,7 @@ def test_evolution_verifier_hard_vetoes_shell_access(monkeypatch, tmp_path: Path
     result = verify()
     assert result["reward"] == 0.0
     assert result["extra_info"]["eligible"] is False
+    assert result["eligible"] is False
     assert "shell_access" in result["extra_info"]["hard_veto"]
 
 
@@ -259,7 +261,7 @@ def test_evolution_task_config_selects_dynamic_profile_and_verifier() -> None:
                 "environment_digest": _digest(b"environment"),
                 "verifier_id": "dsh-harness-evolution-verifier",
                 "verifier_version": "1",
-                "verifier_code_digest": "sha256:6715dbe97e671ca9151a68ec7676bf00a35072f591b1dfacd3814db1b773e991",
+                "verifier_code_digest": "sha256:067668803e5f6fdb5f64cd44a17e2f4baef8835e4681a02cdf35d9f6bb4e3748",
             },
         }
     )

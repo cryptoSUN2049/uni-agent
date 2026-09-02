@@ -43,4 +43,4 @@
   verifier_version: null
   # Digest of the checked-in S0 verifier.py. Replace together with
   # verifier_command when moving to a benchmark verifier.
-  verifier_code_digest: sha256:8c3f588dd1137b57155962a0fd083627e66ea891ef1c6fa6ce1f05218cac515e
+  verifier_code_digest: sha256:eb5e0d68779739d04e1038534e5f2799a44cf299e7325ba2f6bef5c793ecf2cd

@@ -114,6 +114,7 @@ def test_task_writes_minimal_envelope_and_returns_verifier_reward() -> None:
             {
                 "reward": 0.75,
                 "accuracy": 0.5,
+                "eligible": True,
                 "fresh": True,
                 "issued_at": "2026-09-01T00:00:00Z",
                 "evidence": ["answer.json"],
@@ -137,6 +138,7 @@ def test_task_writes_minimal_envelope_and_returns_verifier_reward() -> None:
     assert result.reward_info is not None
     dsh_info = result.reward_info["dsh"]
     assert dsh_info["freshness"] == "fresh"
+    assert dsh_info["eligible"] is True
     assert dsh_info["task_id"] == "dsh/architecture/intro"
     assert dsh_info["receipt_sha256"].startswith("sha256:")
     assert dsh_info["verifier_code_digest"].startswith("sha256:")
@@ -146,6 +148,7 @@ def test_task_writes_minimal_envelope_and_returns_verifier_reward() -> None:
     receipt = json.loads(sandbox.writes[receipt_paths[0]])
     assert receipt["schema"] == "dsh.verifier-receipt.v1"
     assert receipt["fresh"] is True
+    assert receipt["eligible"] is True
     assert receipt["artifact_sha256"].startswith("sha256:")
     verifier_call = next(call for call in sandbox.calls if call["argv"] == ["verify-dsh", "--json"])
     assert verifier_call["argv"] == ["verify-dsh", "--json"]
@@ -166,14 +169,49 @@ def test_task_rejects_nonfinite_or_nonobject_verifier_results() -> None:
             asyncio.run(_HarnessTask(_config(), sandbox, _FakeAgent()).run())
 
 
+@pytest.mark.parametrize(
+    "verifier_result",
+    [
+        {"reward": 1.0, "fresh": True, "evidence": ["ok"]},
+        {"reward": 1.0, "eligible": "true", "fresh": True, "evidence": ["ok"]},
+    ],
+    ids=["missing", "non-boolean"],
+)
+def test_task_requires_boolean_verifier_eligibility(verifier_result: dict[str, object]) -> None:
+    sandbox = _FakeSandbox(json.dumps(verifier_result))
+
+    with pytest.raises(RuntimeError, match="eligible.*boolean"):
+        asyncio.run(_HarnessTask(_config(), sandbox, _FakeAgent()).run())
+
+
+def test_task_binds_verifier_ineligibility_into_receipt_and_reward_lineage() -> None:
+    sandbox = _FakeSandbox(
+        json.dumps(
+            {
+                "reward": 0.0,
+                "eligible": False,
+                "fresh": True,
+                "evidence": ["hard-veto:shell-access"],
+            }
+        )
+    )
+
+    result = asyncio.run(_HarnessTask(_config(), sandbox, _FakeAgent()).run())
+
+    assert result.reward_info is not None
+    assert result.reward_info["dsh"]["eligible"] is False
+    receipt_path = next(path for path in sandbox.writes if path.endswith("verifier-receipt.json"))
+    assert json.loads(sandbox.writes[receipt_path])["eligible"] is False
+
+
 def test_task_rejects_historical_verifier_reward() -> None:
-    sandbox = _FakeSandbox(json.dumps({"reward": 1.0, "fresh": False, "evidence": ["old.json"]}))
+    sandbox = _FakeSandbox(json.dumps({"reward": 1.0, "eligible": True, "fresh": False, "evidence": ["old.json"]}))
     with pytest.raises(RuntimeError, match="fresh=true"):
         asyncio.run(_HarnessTask(_config(), sandbox, _FakeAgent()).run())
 
 
 def test_task_rejects_trace_bytes_that_do_not_match_agent_hash() -> None:
-    sandbox = _FakeSandbox(json.dumps({"reward": 1.0, "fresh": True, "evidence": ["ok"]}))
+    sandbox = _FakeSandbox(json.dumps({"reward": 1.0, "eligible": True, "fresh": True, "evidence": ["ok"]}))
     sandbox.trace_bytes = b"tampered trace\n"
     with pytest.raises(RuntimeError, match="trace bytes"):
         asyncio.run(_HarnessTask(_config(), sandbox, _FakeAgent()).run())
@@ -181,7 +219,7 @@ def test_task_rejects_trace_bytes_that_do_not_match_agent_hash() -> None:
 
 def test_task_rejects_operator_and_metadata_identity_mismatch() -> None:
     config = _config(verifier_id="other-verifier")
-    sandbox = _FakeSandbox(json.dumps({"reward": 1.0, "fresh": True, "evidence": ["answer.json"]}))
+    sandbox = _FakeSandbox(json.dumps({"reward": 1.0, "eligible": True, "fresh": True, "evidence": ["answer.json"]}))
     with pytest.raises(RuntimeError, match="operator pin verifier_id"):
         asyncio.run(_HarnessTask(config, sandbox, _FakeAgent()).run())
 

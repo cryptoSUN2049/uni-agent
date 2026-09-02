@@ -4,9 +4,10 @@
 The verifier intentionally treats the model's final JSON as a report, not as
 the source of truth. It independently reads the immutable fixture, rebuilds
 the expected transformation, and reconstructs the Cordis lifecycle from the
-canonical DSH ``tool/call``/``tool/result`` events. A failed or unsafe episode
-returns a finite zero reward with ``eligible=false`` so the online sampler can
-discard it without turning a policy mistake into a trainer failure.
+canonical DSH ``tool/call``/``tool/result`` events. An unsafe episode returns a
+finite zero reward with top-level ``eligible=false`` so trajectory admission
+rejects it. A safe policy mistake remains eligible and supplies a learnable
+zero or partial reward.
 """
 
 from __future__ import annotations
@@ -456,6 +457,7 @@ def verify() -> dict[str, Any]:
     return {
         "reward": float(reward),
         "accuracy": accuracy,
+        "eligible": details["eligible"],
         "finished": envelope.get("finished") if type(envelope.get("finished")) is bool else False,
         "fresh": True,
         "issued_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),

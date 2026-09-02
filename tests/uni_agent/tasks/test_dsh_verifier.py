@@ -51,6 +51,7 @@ def test_smoke_verifier_checks_exact_trace_and_scores_response(monkeypatch, tmp_
 
     assert result["reward"] == 1.0
     assert result["fresh"] is True
+    assert result["eligible"] is True
     assert result["extra_info"]["matched"] is True
 
 

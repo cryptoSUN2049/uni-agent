@@ -20,7 +20,12 @@ def _digest(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
 
 
-def _valid_trajectory(tmp_path: Path, *, split: str = "train") -> tuple[Trajectory, Path, Path]:
+def _valid_trajectory(
+    tmp_path: Path,
+    *,
+    split: str = "train",
+    eligible: bool = True,
+) -> tuple[Trajectory, Path, Path]:
     gateway_session_id = "session-sample-0-rollout-0-audit"
     dsh_session_id = f"dsh-{gateway_session_id}"
     trace_root = tmp_path / "traces"
@@ -71,6 +76,7 @@ def _valid_trajectory(tmp_path: Path, *, split: str = "train") -> tuple[Trajecto
         },
         "issued_at": "2026-09-02T00:00:00Z",
         "fresh": True,
+        "eligible": eligible,
         "issuer": {"kind": "trusted-verifier", "id": "uni-agent-dsh"},
         "reward": 0.75,
         "accuracy": 1.0,
@@ -89,6 +95,7 @@ def _valid_trajectory(tmp_path: Path, *, split: str = "train") -> tuple[Trajecto
             "schema": "dsh.verifier-receipt.v1",
             "receipt_sha256": receipt_id,
             "freshness": "fresh",
+            "eligible": eligible,
             "rollout_id": gateway_session_id,
             "task_id": identity["task_id"],
             "task_version": identity["task_version"],
@@ -128,6 +135,21 @@ def test_validate_trajectories_accepts_fresh_hash_bound_dsh_artifacts(tmp_path: 
     )
 
     assert result == [trajectory]
+
+
+def test_validate_trajectories_rejects_verifier_ineligible_episode(tmp_path: Path) -> None:
+    trajectory, trace_root, result_root = _valid_trajectory(tmp_path, eligible=False)
+
+    with pytest.raises(TrajectoryAuditError, match="eligible=true"):
+        validate_trajectories(
+            (trajectory,),
+            context={
+                "partition_id": "train",
+                "gateway_session_id": "session-sample-0-rollout-0-audit",
+            },
+            trace_root=str(trace_root),
+            result_root=str(result_root),
+        )
 
 
 @pytest.mark.parametrize(
